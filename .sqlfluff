@@ -1,0 +1,56 @@
+[sqlfluff]
+dialect = postgres
+templater = dbt
+max_line_length = 120
+
+# [완전 차단] 린터가 줄바꿈이나 공백을 수정하려는 모든 시도를 차단합니다.
+# LT01(공백), LT02(들여쓰기), LT09(SELECT 레이아웃)를 제외하여 
+# 사용자가 맞춘 'sticky right'와 'select 옆 컬럼'을 그대로 보존합니다.
+exclude_rules = RF04, AL01, AM05, LT01, LT02, LT09
+
+[sqlfluff:indentation]
+# 모든 자동 들여쓰기 계산을 0 또는 false로 설정하여 린터의 개입을 막습니다.
+indent_unit = space
+tab_width = 5
+indented_joins = false
+indented_using_on = false
+indented_on_contents = false
+indented_ctes = false
+indented_then = false
+indented_then_contents = false
+# 사용자가 맞춘 정렬(Sticky Right)을 에러로 잡지 않도록 허용
+implicit_indents = allow
+align_alias = true
+
+[sqlfluff:templater:dbt]
+project_dir = ./dbt_projects/edu001
+profiles_dir = ./dbt_projects/edu001/.dbt
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:layout.commas]
+# 콤마 위치는 Leading으로 유지하되, LT02가 꺼져 있으므로 사용자가 정한 위치에 고정됩니다.
+line_position = leading
+
+[sqlfluff:layout:type:comma]
+spacing_before = single
+spacing_after = touch
+line_position = leading
+
+[sqlfluff:rules:layout.select_targets]
+# 첫 번째 컬럼 부착 허용
+select_item_first_line = true
+wildcard_policy = single
+
+[sqlfluff:rules:layout.spacing]
+# 키워드(from, where 등) 앞의 정렬용 공백을 삭제하지 않도록 설정
+ignore_comment_lines = true
+# 규칙 내에서 LT01이 살아나지 않도록 재차 차단
+exclude_rules = LT01
+
+[sqlfluff:rules:layout.end_of_file]
+# 파일 끝 줄바꿈 관리

@@ -1,0 +1,7 @@
+airflow/logs/**
+venv_dbt/**
+airflow/dags/**
+airflow/config/**
+airflow/postgres_data/*
+**/__pycache__/
+dbt_project/edu001/**

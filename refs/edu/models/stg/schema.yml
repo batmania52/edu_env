@@ -1,0 +1,68 @@
+version: 2
+models:
+- name: stg_customers
+  description: Model for stg_customers in stg schema.
+  columns:
+  - name: customer_id
+    description: Column customer_id with type integer
+    data_type: integer
+  - name: customer_name
+    description: Column customer_name with type character varying
+    data_type: character varying(255)
+  - name: customer_email
+    description: Column customer_email with type character varying
+    data_type: character varying(255)
+  - name: registration_date
+    description: Column registration_date with type date
+    data_type: date
+- name: stg_order_items
+  description: Model for stg_order_items in stg schema.
+  columns:
+  - name: order_item_id
+    description: Column order_item_id with type integer
+    data_type: integer
+  - name: order_id
+    description: Column order_id with type integer
+    data_type: integer
+  - name: product_id
+    description: Column product_id with type integer
+    data_type: integer
+  - name: quantity
+    description: Column quantity with type integer
+    data_type: integer
+  - name: price
+    description: Column price with type numeric
+    data_type: numeric(10,2)
+- name: stg_orders
+  description: Model for stg_orders in stg schema.
+  columns:
+  - name: order_id
+    description: Column order_id with type integer
+    data_type: integer
+  - name: customer_id
+    description: Column customer_id with type integer
+    data_type: integer
+  - name: order_date
+    description: Column order_date with type timestamp without time zone
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: Column total_amount with type numeric
+    data_type: numeric(10,2)
+- name: stg_products
+  description: Model for stg_products in stg schema.
+  columns:
+  - name: product_id
+    description: Column product_id with type integer
+    data_type: integer
+  - name: product_name
+    description: Column product_name with type character varying
+    data_type: character varying(255)
+  - name: product_category
+    description: Column product_category with type character varying
+    data_type: character varying(255)
+  - name: price
+    description: Column price with type numeric
+    data_type: numeric(10,2)
+  - name: created_date
+    description: Column created_date with type date
+    data_type: date

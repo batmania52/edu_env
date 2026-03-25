@@ -1,0 +1,9 @@
+{
+  "project_dir": "../dbt_projects/edu001",
+  "profile_dir": "../dbt_projects/edu001/.dbt",
+  "target": "dev",
+  "selected_model": "stg_products",
+  "run_mode": "manual",
+  "start_date": "20260301",
+  "end_date": "20260326"
+}
