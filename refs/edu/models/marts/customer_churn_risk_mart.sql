@@ -36,9 +36,9 @@ select c.customer_id
      , co.total_orders
      , co.avg_order_value::numeric(10,2) as avg_order_value
      , case
-         when (date '{{ end }}' - co.last_order_date::date) > 90 then 'High'
-         when (date '{{ end }}' - co.last_order_date::date) > 30 then 'Medium'
-         else 'Low'
+         when (date '{{ end }}' - co.last_order_date::date) > 90 then '3'
+         when (date '{{ end }}' - co.last_order_date::date) > 30 then '2'
+         else '1'
        end::numeric(10,2) as churn_risk_score
      , case
          when (date '{{ end }}' - co.last_order_date::date) > 90 then 'High'

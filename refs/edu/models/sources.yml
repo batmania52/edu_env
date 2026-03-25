@@ -7,3 +7,5 @@ sources:
   - name: order
   - name: raw_products
   - name: order_items
+  - name: receipts
+  - name: purchase_orders

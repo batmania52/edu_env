@@ -1,125 +1,205 @@
 version: 2
 models:
 - name: customer_churn_risk_mart
-  description: Model for customer_churn_risk_mart in marts schema.
+  description: Model for customer_churn_risk_mart
+  config:
+    materialized: incremental
+    incremental_strategy: append
   columns:
   - name: customer_id
-    description: Column customer_id with type integer
     data_type: integer
+    description: 고객의 기본 키
   - name: customer_name
-    description: Column customer_name with type character varying
     data_type: character varying(255)
+    description: 고객 이름
   - name: customer_email
-    description: Column customer_email with type character varying
     data_type: character varying(255)
+    description: 고객 이메일
   - name: registration_date
-    description: Column registration_date with type date
     data_type: date
+    description: 고객 등록일
   - name: last_order_date
-    description: Column last_order_date with type timestamp without time zone
     data_type: timestamp without time zone
+    description: 고객의 마지막 주문 날짜
   - name: days_since_last_order
-    description: Column days_since_last_order with type integer
     data_type: integer
+    description: 고객의 마지막 주문 이후 경과일
   - name: total_orders
-    description: Column total_orders with type bigint
     data_type: bigint
+    description: 고객의 총 주문 건수
   - name: avg_order_value
-    description: Column avg_order_value with type numeric
     data_type: numeric(10,2)
+    description: 고객 주문의 평균 가치
   - name: churn_risk_score
-    description: Column churn_risk_score with type numeric
     data_type: numeric(10,2)
+    description: 계산된 이탈 위험 점수
   - name: churn_risk_segment
-    description: Column churn_risk_segment with type character varying
     data_type: character varying(255)
+    description: 이탈 위험 세그먼트 (낮음, 중간, 높음)
   - name: analysis_date
-    description: Column analysis_date with type date
     data_type: date
-- name: orders_customers_mart
-  description: Model for orders_customers_mart in marts schema.
+    description: 이탈 위험 분석 수행 날짜
+- name: customer_receipt_mart
+  description: Model for customer_receipt_mart
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - customer_id
   columns:
-  - name: order_id
-    description: Column order_id with type integer
-    data_type: integer
   - name: customer_id
-    description: Column customer_id with type integer
     data_type: integer
+    description: 고객 ID (기본 키)
   - name: customer_name
-    description: Column customer_name with type character varying
     data_type: character varying(255)
+    description: 고객 이름
   - name: customer_email
-    description: Column customer_email with type character varying
     data_type: character varying(255)
-  - name: order_date
-    description: Column order_date with type timestamp without time zone
-    data_type: timestamp without time zone
-  - name: total_amount
-    description: Column total_amount with type numeric
+    description: 고객 이메일
+  - name: first_order_date
+    data_type: date
+    description: 고객의 첫 주문 날짜
+  - name: last_order_date
+    data_type: date
+    description: 고객의 마지막 주문 날짜
+  - name: total_receipt_count
+    data_type: bigint
+    description: 고객의 총 주문 건수
+  - name: total_items_purchased
+    data_type: bigint
+    description: 고객이 구매한 총 상품 수량
+  - name: total_spend_amount
+    data_type: numeric(18,2)
+    description: 고객의 총 지출 금액
+  - name: average_item_price
     data_type: numeric(10,2)
+    description: 고객이 구매한 상품의 평균 가격
+- name: orders_customers_mart
+  description: Model for orders_customers_mart
+  config:
+    materialized: incremental
+    incremental_strategy: append
+  columns:
+  - name: order_id
+    data_type: integer
+    description: 주문의 기본 키
+  - name: customer_id
+    data_type: integer
+    description: 고객에 대한 외래 키
+  - name: customer_name
+    data_type: character varying(255)
+    description: 고객 이름
+  - name: customer_email
+    data_type: character varying(255)
+    description: 고객 이메일
+  - name: order_date
+    data_type: timestamp without time zone
+    description: 주문 날짜
+  - name: total_amount
+    data_type: numeric(10,2)
+    description: 주문 총액
   - name: registration_date
-    description: Column registration_date with type date
     data_type: date
+    description: 고객 등록일
 - name: orders_mart
-  description: Model for orders_mart in marts schema.
+  description: Model for orders_mart
+  config:
+    materialized: incremental
+    incremental_strategy: append
   columns:
   - name: order_id
-    description: Column order_id with type integer
     data_type: integer
+    description: 주문의 기본 키
   - name: customer_id
-    description: Column customer_id with type integer
     data_type: integer
+    description: 고객에 대한 외래 키
   - name: order_date
-    description: Column order_date with type timestamp without time zone
     data_type: timestamp without time zone
+    description: 주문 날짜
   - name: total_amount
-    description: Column total_amount with type numeric
     data_type: numeric(10,2)
+    description: 주문 총액
   - name: product_id
-    description: Column product_id with type integer
     data_type: integer
+    description: 상품 ID
   - name: quantity
-    description: Column quantity with type integer
     data_type: integer
+    description: 상품 수량
   - name: price
-    description: Column price with type numeric
     data_type: numeric(10,2)
+    description: 상품 가격
   - name: item_total
-    description: Column item_total with type numeric
     data_type: numeric(10,2)
+    description: 항목별 총액
 - name: orders_products_mart
-  description: Model for orders_products_mart in marts schema.
+  description: Model for orders_products_mart
+  config:
+    materialized: incremental
+    incremental_strategy: append
   columns:
   - name: order_id
-    description: Column order_id with type integer
     data_type: integer
+    description: 주문의 기본 키
   - name: customer_id
-    description: Column customer_id with type integer
     data_type: integer
+    description: 고객에 대한 외래 키
   - name: order_date
-    description: Column order_date with type timestamp without time zone
     data_type: timestamp without time zone
+    description: 주문 날짜
   - name: total_amount
-    description: Column total_amount with type numeric
     data_type: numeric(10,2)
+    description: 주문 총액
   - name: product_id
-    description: Column product_id with type integer
     data_type: integer
+    description: 상품에 대한 외래 키
   - name: product_name
-    description: Column product_name with type character varying
     data_type: character varying(255)
+    description: 상품 이름
   - name: product_category
-    description: Column product_category with type character varying
     data_type: character varying(255)
+    description: 상품 카테고리
   - name: item_price
-    description: Column item_price with type numeric
     data_type: numeric(10,2)
+    description: 주문 항목의 상품 가격
   - name: product_price
-    description: Column product_price with type numeric
     data_type: numeric(10,2)
+    description: 상품의 현재 가격
   - name: quantity
-    description: Column quantity with type integer
     data_type: integer
+    description: 주문 항목의 상품 수량
   - name: product_created_date
-    description: Column product_created_date with type date
     data_type: date
+    description: 상품 생성일
+- name: purchase_order_summary
+  description: Model for purchase_order_summary
+  config:
+    materialized: incremental
+    incremental_strategy: append
+  columns:
+  - name: customer_id
+    data_type: integer
+    description: 고객 고유 ID
+  - name: customer_name
+    data_type: character varying(255)
+    description: 고객 이름
+  - name: total_purchase_orders
+    data_type: bigint
+    description: 총 발주 횟수
+  - name: total_purchase_amount
+    data_type: numeric(10,2)
+    description: 총 발주 금액
+  - name: pending_orders
+    data_type: bigint
+    description: 대기 중인 발주 횟수
+  - name: completed_orders
+    data_type: bigint
+    description: 완료된 발주 횟수
+  - name: canceled_orders
+    data_type: bigint
+    description: 취소된 발주 횟수
+  - name: first_purchase_order_date
+    data_type: timestamp without time zone
+    description: 첫 발주 날짜
+  - name: last_purchase_order_date
+    data_type: timestamp without time zone
+    description: 마지막 발주 날짜
