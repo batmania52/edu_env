@@ -1,0 +1,6 @@
+{
+  "project_dir": "/home/batmania/projects/edu_env/dbt_projects/edu001",
+  "profile_dir": "/home/batmania/projects/edu_env/dbt_projects/edu001/.dbt",
+  "target": "dev",
+  "schema": "stg"
+}

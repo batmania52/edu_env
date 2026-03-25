@@ -39,6 +39,24 @@ models:
   - name: price
     data_type: numeric(10,2)
     description: 상품 가격
+- name: stg_orders
+  description: Model for stg_orders
+  config:
+    materialized: incremental
+    incremental_strategy: append
+  columns:
+  - name: order_id
+    data_type: integer
+    description: 주문의 기본 키
+  - name: customer_id
+    data_type: integer
+    description: 고객에 대한 외래 키
+  - name: order_date
+    data_type: timestamp without time zone
+    description: 주문 날짜
+  - name: total_amount
+    data_type: numeric(10,2)
+    description: 주문 총액
 - name: stg_products
   description: Model for stg_products
   config:
@@ -128,21 +146,3 @@ models:
   - name: item_total
     data_type: numeric(10,2)
     description: 개별 상품 총액
-- name: stg_orders
-  description: Model for stg_orders
-  config:
-    materialized: incremental
-    incremental_strategy: append
-  columns:
-  - name: order_id
-    data_type: integer
-    description: 주문의 기본 키
-  - name: customer_id
-    data_type: integer
-    description: 고객에 대한 외래 키
-  - name: order_date
-    data_type: timestamp without time zone
-    description: 주문 날짜
-  - name: total_amount
-    data_type: numeric(10,2)
-    description: 주문 총액
