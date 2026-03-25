@@ -1,17 +1,16 @@
-from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
+from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig, ExecutionConfig
+from cosmos.constants import ExecutionMode
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 from pathlib import Path
-import os
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="cosmos")
+warnings.filterwarnings("ignore", message=".*Artifact schema version.*")
+warnings.filterwarnings("ignore", message=".*Airflow 3.0.0 Asset.*")
+warnings.filterwarnings("ignore", message=".*AIP-60.*")
 
-# dbt 프로젝트 루트 경로 (Airflow 컨테이너 내부 기준)
 DBT_PROJECT_PATH = Path("/opt/airflow/dbt_projects/edu001")
 
 def get_dbt_tag_task_group(dag, group_id, tag, schema="stg"):
-    """
-    특정 dbt tag를 기준으로 TaskGroup을 생성합니다.
-    Airflow run_id 및 기간 변수를 dbt에 전달하도록 구성되었습니다.
-    """
-    
     profile_config = ProfileConfig(
         profile_name="edu001",
         target_name="dev",
@@ -26,14 +25,19 @@ def get_dbt_tag_task_group(dag, group_id, tag, schema="stg"):
         dag=dag,
         project_config=ProjectConfig(DBT_PROJECT_PATH),
         profile_config=profile_config,
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.LOCAL,
+            dbt_executable_path="/opt/dbt-venv/bin/dbt",  # ← 변경
+        ),
         render_config=RenderConfig(
             select=[f"tag:{tag}"],
+            emit_datasets=False
         ),
-        # Cosmos에서 Airflow context를 dbt vars로 전달하는 설정
         operator_args={
             "vars": {
-                "data_interval_start": "{{ data_interval_start.strftime('%Y-%m-%d %H:%M:%S') }}",
-                "data_interval_end": "{{ data_interval_end.strftime('%Y-%m-%d %H:%M:%S') }}",
+                "data_interval_start": "{{ params.data_interval_start}}",
+                "data_interval_end": "{{ params.data_interval_end }}",
+                "run_mode": "{{ params.run_mode }}",
                 "airflow_run_id": "{{ run_id }}"
             }
         }

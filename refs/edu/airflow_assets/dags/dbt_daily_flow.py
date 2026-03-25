@@ -1,9 +1,17 @@
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
+from airflow.models.param import Param
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 import sys
 import os
-
+import pendulum
+local_tz = pendulum.timezone("Asia/Seoul")
+start_adj = {"months":0, "weeks":0, "days":-1, "hours":0, "minutes":0}
+end_adj = {"months":0, "weeks":0, "days":0, "hours":0, "minutes":0}
+now = datetime.now(local_tz)
+end_time = now.replace(hour=23, minute=59, second=59, microsecond=0) + relativedelta(**end_adj)
+start_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + relativedelta(**start_adj)
 # plugins 디렉토리를 python path에 추가
 sys.path.append(os.path.join(os.environ['AIRFLOW_HOME'], 'plugins'))
 from dbt_cosmos_utils import get_dbt_tag_task_group
@@ -16,11 +24,16 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
+params = {'data_interval_start': Param(start_time.strftime('%Y-%m-%d %H:%M:%S'), type="string", description="Data Interval Start"),
+        'data_interval_end': Param(end_time.strftime('%Y-%m-%d %H:%M:%S'), type="string", description="Data Interval End"),
+        'run_mode': Param("schedule", type="string", enum=["schedule", "manual"], description="Run Mode (manual/schedule)")}
+
 with DAG(
     'dbt_daily_flow',
     default_args=default_args,
     description='A daily dbt workflow using Cosmos TaskGroups',
     schedule_interval=None,
+    params=params,
     catchup=False,              # 지침: 과거 누락분 실행 방지
     is_paused_upon_creation=True, # 지침: 활성화 시 자동 실행 방지
     tags=['dbt', 'edu001'],
