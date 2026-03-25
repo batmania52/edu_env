@@ -1,21 +1,23 @@
-FROM apache/airflow:2.8.1-python3.9
-
+FROM apache/airflow:2.10.4-python3.11
 USER root
-
-# Install system dependencies including git
 RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    libpq-dev \
-    git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    gcc python3-dev libpq-dev git \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/dbt-venv \
+    && /opt/dbt-venv/bin/pip install --no-cache-dir \
+        "dbt-core==1.11.7" \
+        "dbt-postgres==1.10.0"
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 USER airflow
-
-# Install dbt and astronomer-cosmos
 RUN pip install --no-cache-dir \
-    dbt-core==1.7.4 \
-    dbt-postgres==1.7.4 \
-    astronomer-cosmos==1.3.2 \
-    psycopg2-binary
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.11.txt" \
+    "apache-airflow-providers-celery" \
+    "apache-airflow-providers-redis" \
+    "astronomer-cosmos==1.10.0" \
+    redis psycopg2-binary
+
+ENTRYPOINT ["/entrypoint.sh"]

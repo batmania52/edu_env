@@ -1,4 +1,3 @@
-
 version: '3.8'
 
 x-airflow-common:
@@ -6,7 +5,6 @@ x-airflow-common:
   build: .
   image: ${AIRFLOW_IMAGE_NAME:-airflow-dbt:latest}
   environment:
-    # AIRFLOW 기본 설정
     AIRFLOW_UID: ${AIRFLOW_UID:-50000}
     AIRFLOW_HOME: /opt/airflow
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
@@ -18,10 +16,11 @@ x-airflow-common:
     AIRFLOW__WEBSERVER__RBAC: 'true'
     AIRFLOW__WEBSERVER__WEB_SERVER_PORT: '8080'
     _PIP_ADDITIONAL_REQUIREMENTS: "${_PIP_ADDITIONAL_REQUIREMENTS:-}"
-    
-    # [추가] Postgres 자동 연결 설정 (postgres_default)
     AIRFLOW_CONN_POSTGRES_DEFAULT: 'postgres://airflow:airflow@postgres:5432/airflow'
-    
+    AIRFLOW__COSMOS__ENABLE_DATASET_ALIAS: 'false'
+    _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+    _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+    AIRFLOW__OPENLINEAGE__DISABLED: 'true'
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -60,28 +59,6 @@ services:
     networks:
       - airflow_network
 
-  airflow-init:
-    <<: *airflow-common
-    command: version
-    environment:
-      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
-      AIRFLOW_HOME: /opt/airflow
-      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres/airflow
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      _AIRFLOW_DB_UPGRADE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
-      # init 서비스에도 환경 변수 전달
-      AIRFLOW_CONN_POSTGRES_DEFAULT: 'postgres://airflow:airflow@postgres:5432/airflow'
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
   airflow-webserver:
     <<: *airflow-common
     command: webserver
@@ -97,8 +74,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
 
   airflow-scheduler:
     <<: *airflow-common
@@ -108,19 +83,33 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
 
   airflow-worker:
     <<: *airflow-common
     command: celery worker
+    environment:
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql://airflow:airflow@postgres/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS: 'false'
+      AIRFLOW__WEBSERVER__RBAC: 'true'
+      AIRFLOW__WEBSERVER__WEB_SERVER_PORT: '8080'
+      _PIP_ADDITIONAL_REQUIREMENTS: "${_PIP_ADDITIONAL_REQUIREMENTS:-}"
+      AIRFLOW_CONN_POSTGRES_DEFAULT: 'postgres://airflow:airflow@postgres:5432/airflow'
+      AIRFLOW__COSMOS__ENABLE_DATASET_ALIAS: 'false'
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
+      AIRFLOW__OPENLINEAGE__DISABLED: 'true'
+      CELERY_HOSTNAME: "worker@localhost"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
 
 volumes:
   postgres_data:
