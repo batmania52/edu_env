@@ -128,21 +128,3 @@ models:
   - name: total_amount
     data_type: numeric(10,2)
     description: 주문 총액
-- name: stg_customers
-  description: Model for stg_customers
-  config:
-    materialized: incremental
-    incremental_strategy: append
-  columns:
-  - name: customer_id
-    data_type: integer
-    description: 고객의 기본 키
-  - name: customer_name
-    data_type: character varying(255)
-    description: 고객 이름
-  - name: customer_email
-    data_type: character varying(255)
-    description: 고객 이메일
-  - name: registration_date
-    data_type: date
-    description: 고객 등록일
