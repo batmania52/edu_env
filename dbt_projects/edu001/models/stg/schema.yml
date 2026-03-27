@@ -168,3 +168,29 @@ models:
   - name: dbt_dtm
     description: dbt 적재 일시
     data_type: timestamp without time zone
+- name: stg_purchase_orders2
+  description: 발주 데이터 (before_sql 다중 구문 테스트용)
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - purchase_order_id
+  columns:
+  - name: purchase_order_id
+    description: 발주 고유 ID
+    data_type: integer
+  - name: customer_id
+    description: 발주 고객 ID
+    data_type: integer
+  - name: order_date
+    description: 발주 날짜 및 시간
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 발주 총 금액
+    data_type: numeric(10,2)
+  - name: status
+    description: '발주 상태 (예: pending, completed, canceled)'
+    data_type: character varying(50)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone

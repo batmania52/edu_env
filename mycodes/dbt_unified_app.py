@@ -9,15 +9,17 @@ import shutil
 import psycopg2
 import psycopg2.pool
 import re
-from contextlib import contextmanager
+import uuid
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta
 
 # ============================================================
-# 1. 설정 및 캐시
+# 0. 설정 및 캐시
 # ============================================================
 CACHE_FILE = ".dbt_unified_cache.json"
 
 def load_cache():
+    """캐시 파일이 존재하면 JSON을 dict로 로드하고, 없거나 오류 시 빈 dict 반환."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
@@ -27,10 +29,12 @@ def load_cache():
     return {}
 
 def save_cache(data):
+    """dict를 캐시 파일에 JSON 형식으로 저장."""
     with open(CACHE_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 def convert_to_dbt_ts(date_obj, is_end=False):
+    """date 객체를 dbt vars용 타임스탬프 문자열로 변환. is_end=True이면 23:59:59, 아니면 00:00:00."""
     if is_end:
         return date_obj.strftime('%Y-%m-%d 23:59:59')
     return date_obj.strftime('%Y-%m-%d 00:00:00')
@@ -78,6 +82,22 @@ def get_db_config(profile_dir, target_name):
             }
     except Exception:
         return None
+
+def check_history_tables_exist(db_config):
+    """admin.verification_summary, admin.dbt_log 두 테이블 존재 여부 반환 (bool, bool)"""
+    try:
+        with get_conn(db_config) as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT table_name FROM information_schema.tables
+                    WHERE table_schema = 'admin'
+                      AND table_name IN ('verification_summary', 'dbt_log')
+                """)
+                found = {row[0] for row in cur.fetchall()}
+        return 'verification_summary' in found, 'dbt_log' in found
+    except Exception:
+        return False, False
+
 
 def get_schemas(db_config):
     """시스템 스키마를 제외한 사용자 스키마 목록"""
@@ -235,6 +255,7 @@ def build_model_entry(model_name, columns, pk, table_comment):
 # 4. Runner 전용 유틸리티
 # ============================================================
 def check_model_schema_exists(project_dir, model_name):
+    """모델명이 models 하위 YAML 파일에 정의되어 있는지 확인. (bool, 경로 또는 오류 메시지) 반환."""
     if not model_name:
         return True, None
     m_path = os.path.join(project_dir, 'models')
@@ -254,6 +275,7 @@ def check_model_schema_exists(project_dir, model_name):
     return False, f"⚠️ 모델 '{model_name}'의 정의가 YAML 파일에 없습니다."
 
 def get_dbt_model_hierarchy(project_dir):
+    """models 디렉토리를 탐색해 {그룹명: [모델명, ...]} 계층과 {모델명: 그룹명} 역매핑을 반환."""
     h, m2g = {}, {}
     m_path = os.path.join(project_dir, 'models')
     if not os.path.exists(m_path):
@@ -269,6 +291,7 @@ def get_dbt_model_hierarchy(project_dir):
     return h, m2g
 
 def get_compiled_sql(project_dir, model_name):
+    """target/compiled 디렉토리에서 모델의 컴파일된 SQL 파일을 찾아 내용을 반환. 없으면 None."""
     t_base = os.path.join(project_dir, 'target', 'compiled')
     for r, _, fs in os.walk(t_base):
         if f"{model_name}.sql" in fs:
@@ -286,6 +309,36 @@ def _get_this_from_manifest(project_dir, model_name):
             manifest = json.load(f)
         for key, node in manifest.get('nodes', {}).items():
             if key.startswith('model.') and node.get('name') == model_name:
+                return node.get('relation_name')
+    except Exception:
+        pass
+    return None
+
+def _get_ref_from_manifest(project_dir, ref_model_name):
+    """manifest.json에서 ref('model') → relation_name 추출"""
+    manifest_path = os.path.join(project_dir, 'target', 'manifest.json')
+    if not os.path.exists(manifest_path):
+        return None
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        for key, node in manifest.get('nodes', {}).items():
+            if key.startswith('model.') and node.get('name') == ref_model_name:
+                return node.get('relation_name')
+    except Exception:
+        pass
+    return None
+
+def _get_source_from_manifest(project_dir, source_name, table_name):
+    """manifest.json에서 source('source_name', 'table_name') → relation_name 추출"""
+    manifest_path = os.path.join(project_dir, 'target', 'manifest.json')
+    if not os.path.exists(manifest_path):
+        return None
+    try:
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            manifest = json.load(f)
+        for key, node in manifest.get('sources', {}).items():
+            if node.get('source_name') == source_name and node.get('name') == table_name:
                 return node.get('relation_name')
     except Exception:
         pass
@@ -316,10 +369,77 @@ def get_before_sql_from_model(project_dir, model_name, start_ts, end_ts):
     before_sql = re.sub(r"'\{\{\s*end\s*\}\}'", f"'{end_ts}'", before_sql)
     before_sql = re.sub(r"\{\{\s*start\s*\}\}", start_ts, before_sql)
     before_sql = re.sub(r"\{\{\s*end\s*\}\}", end_ts, before_sql)
+    # {{ source('source_name', 'table_name') }} → manifest relation_name 또는 "source_name"."table_name" 폴백
+    def _replace_source(m):
+        sn, tn = m.group(1), m.group(2)
+        return _get_source_from_manifest(project_dir, sn, tn) or f'"{sn}"."{tn}"'
+    before_sql = re.sub(
+        r"\{\{\s*source\s*\(\s*['\"](\w+)['\"]\s*,\s*['\"](\w+)['\"]\s*\)\s*\}\}",
+        _replace_source, before_sql
+    )
+    # {{ ref('model_name') }} → manifest relation_name 또는 "model_name" 폴백
+    def _replace_ref(m):
+        mn = m.group(1)
+        return _get_ref_from_manifest(project_dir, mn) or f'"{mn}"'
+    before_sql = re.sub(
+        r"\{\{\s*ref\s*\(\s*['\"](\w+)['\"]\s*\)\s*\}\}",
+        _replace_ref, before_sql
+    )
     return before_sql
 
 
+def _get_model_raw_sql(project_dir, model_name):
+    """모델 SQL 파일 raw 내용 반환 (스키마.모델명 또는 모델명 형태 지원)"""
+    _mn = model_name.split('.')[-1]
+    _models_dir = os.path.join(project_dir, 'models')
+    for _root, _, _files in os.walk(_models_dir):
+        if f"{_mn}.sql" in _files:
+            with open(os.path.join(_root, f"{_mn}.sql"), 'r', encoding='utf-8') as _f:
+                return _f.read()
+    return ''
+
+def _detect_before_sql_date_col(raw_sql):
+    """before_sql 블록 내 DELETE 문에서 {{start}}/{{end}} 비교에 사용된 컬럼명 추출.
+    DELETE 문이 없으면 None 반환.
+    BETWEEN '{{ start }}' 및 col >= '{{ start }}' 패턴 모두 지원.
+    """
+    _m = re.search(r'\{%-?\s*set before_sql\s*-?%\}(.*?)\{%-?\s*endset\s*-?%\}',
+                   raw_sql, re.DOTALL | re.IGNORECASE)
+    if not _m:
+        return None
+    _block = _m.group(1)
+    # DELETE 문이 있는 구문에서만 감지
+    _stmts = [s.strip() for s in _block.split(';') if s.strip()]
+    _delete_stmts = [s for s in _stmts if re.match(r'\s*delete\b', s, re.IGNORECASE)]
+    if not _delete_stmts:
+        return None
+    _delete_block = ' '.join(_delete_stmts)
+    _cm = re.search(
+        r'"?(\w+)"?\s+(?:between\s*[\'"]?\{\{\s*(?:start|end)|[<>=!]+\s*[\'"]?\{\{\s*(?:start|end))',
+        _delete_block, re.IGNORECASE
+    )
+    return _cm.group(1) if _cm else None
+
+
+def _render_before_sql(before_sql_text):
+    """before_sql을 구문 유형별로 분리하여 표시.
+    DELETE/TRUNCATE: 🗑️ 캡션, 기타 SQL: 📄 캡션으로 구분.
+    """
+    _stmts = [s.strip() for s in before_sql_text.split(';') if s.strip()]
+    for _stmt in _stmts:
+        if re.match(r'\s*(?:delete|truncate)\b', _stmt, re.IGNORECASE):
+            st.caption("🗑️ before_sql (DELETE / TRUNCATE)")
+        else:
+            st.caption("📄 before_sql (기타 SQL)")
+        st.code(_stmt, language="sql")
+
+def _has_date_vars(raw_sql):
+    """SQL 문자열에 {{start}} 또는 {{end}} 존재 여부"""
+    return bool(re.search(r'\{\{\s*(?:start|end)\s*\}\}', raw_sql))
+
+
 def cleanup_old_runs_by_date(project_dir):
+    """target/run_YYYYMMDD_* 디렉토리 중 오늘 날짜가 아닌 것을 삭제해 디스크를 정리."""
     today_str = datetime.now().strftime('%Y%m%d')
     for run_dir in glob.glob(os.path.join(project_dir, 'target', 'run_*')):
         try:
@@ -329,6 +449,7 @@ def cleanup_old_runs_by_date(project_dir):
             continue
 
 def get_latest_run_results(project_dir):
+    """가장 최근 run 디렉토리의 run_results.json을 파싱해 모델별 실행 결과 목록을 반환."""
     run_dirs = glob.glob(os.path.join(project_dir, 'target', 'run_*'))
     if run_dirs:
         p = os.path.join(max(run_dirs, key=os.path.getmtime), 'run_results.json')
@@ -420,6 +541,7 @@ def get_lineage_from_manifest(project_dir, model_name, up_depth, down_depth):
 # ============================================================
 # 5. 세션 상태 초기화
 # ============================================================
+# 앱 최초 로드 시 한 번만 실행되는 초기화 블록 — 이후 rerun에서는 건너뜀
 if 'init_unified' not in st.session_state:
     st.session_state.update({
         'init_unified': True,
@@ -436,7 +558,8 @@ if 'init_unified' not in st.session_state:
         # Generator 전용
         'gen_sc': None,
         'gen_db_config': None,
-        'runner_to_gen': None,   # Runner → Generator 이관 정보
+        'runner_to_gen': None,   # Runner → Generator 탭 간 이관 데이터 (YAML 미등록 모델 전달)
+        'last_run_df': None,     # 마지막 dbt run 결과 (rerun 후에도 유지)
         # 검증 탭 전용
         'val_results': None,
         'val_src_sc': None,
@@ -447,18 +570,33 @@ if 'init_unified' not in st.session_state:
         'val_sb_model': "📂 모델 선택",
         # 날짜 필터
         'val_date_filter': None,   # 확정된 date_filter dict (버튼 클릭 후 반영)
+        'val_direct_where': "",    # 직접 입력 WHERE 절
         'val_custom_start': "",
         'val_custom_end': "",
         # 샘플 비교 제외 컬럼
         'val_exclude_cols': ['dbt_dtm'],
+        # 탭별 위젯 key 버전 카운터 (초기화 시 증가 → Streamlit이 새 위젯으로 인식)
+        '_gen_key_ver': 0,
+        '_val_key_ver': 0,
+        # 이력 탭 캐시
+        '_hist_veri_df': None,
+        '_hist_log_df':  None,
     })
 
+# 기존 세션에서 신규 키가 누락된 경우 보완
+st.session_state.setdefault('_gen_key_ver', 0)
+st.session_state.setdefault('_val_key_ver', 0)
+
 def on_ui_change():
+    """모델/날짜/모드 위젯 변경 시 호출되어 컴파일 결과와 실행 상태를 초기화."""
     st.session_state.compiled_sql = None
     st.session_state.before_sql = None
     st.session_state.cmd_reviewed = False
+    st.session_state['last_run_df']    = None
+    st.session_state['runner_to_val']  = None   # Runner → Validator 탭 간 이관 데이터 (실행 후 검증 연계)
 
 def select_new_model(model_name):
+    """Lineage 버튼 클릭 시 호출되어 해당 모델로 그룹/모델 selectbox를 전환하고 UI를 초기화."""
     g = st.session_state.model_to_group.get(model_name)
     if g:
         st.session_state.sb_group = g
@@ -501,7 +639,7 @@ with st.sidebar:
                     "target": st.session_state.get("sidebar_target", cache.get("target"))})
         st.success("저장됨")
     st.divider()
-    if st.button("🔄 전체 초기화", use_container_width=True):
+    if st.button("🔄 초기화", key="btn_reset_all", use_container_width=True):
         st.session_state.clear()
         st.rerun()
 
@@ -517,7 +655,16 @@ if os.path.exists(profiles_path):
         _target_default = _target_opts.index(_cached_target) if _cached_target in _target_opts else 0
         target_val = st.sidebar.selectbox("🎯 Target 선택", _target_opts, index=_target_default, key="sidebar_target")
 
-tab_runner, tab_generator, tab_validator = st.tabs(["🚀 dbt Runner", "📝 YAML Generator", "🔍 데이터 검증"])
+# 이력 탭 레이블 — 테이블 미존재 시 시각적 표시
+_hist_db_config = get_db_config(profile_dir, target_val) if target_val else None
+_veri_exists, _dbtlog_exists = (
+    check_history_tables_exist(_hist_db_config) if _hist_db_config else (False, False)
+)
+_history_tab_label = "📋 이력" if (_veri_exists or _dbtlog_exists) else "📋 이력 (미설정)"
+
+tab_runner, tab_generator, tab_validator, tab_history = st.tabs([
+    "🚀 dbt Runner", "📝 YAML Generator", "🔍 데이터 검증", _history_tab_label
+])
 
 # ============================================================
 # TAB 1 : dbt Runner
@@ -526,7 +673,15 @@ with tab_runner:
     hierarchy, m2g = get_dbt_model_hierarchy(project_dir)
     st.session_state.model_to_group = m2g
 
-    cr1, cr2 = st.columns([2, 1])
+    # 위젯 key를 직접 조작하려면 해당 위젯이 생성되기 전에 session_state를 수정해야 함.
+    # rerun 직후 이 시점에서 처리하지 않으면 이미 렌더링된 위젯의 key가 무시된다.
+    # pending flag 처리 — 위젯 생성 전에 실행해야 함
+    if st.session_state.pop('_runner_reset_pending', False):
+        st.session_state['sb_group']     = "📂 모델 그룹을 선택하세요"
+        st.session_state.pop('sb_model', None)
+        st.session_state.pop('rb_run_mode', None)
+
+    cr1, cr2, cr3 = st.columns([2, 1, 1])
     with cr1:
         gp_p = "📂 모델 그룹을 선택하세요"
         sel_g = st.selectbox("📁 그룹 선택", [gp_p] + list(hierarchy.keys()),
@@ -541,6 +696,22 @@ with tab_runner:
     with cr2:
         run_m = st.radio("🏃 모드", ["manual", "schedule"],
                          key="rb_run_mode", horizontal=True, on_change=on_ui_change)
+    with cr3:
+        st.write("")
+        if st.button("🔄 초기화", key="btn_reset_runner", use_container_width=True):
+            # 위젯 key가 아닌 값들은 즉시 초기화
+            st.session_state['up_list']       = {}
+            st.session_state['down_list']     = {}
+            st.session_state['up_depth']      = 0
+            st.session_state['down_depth']    = 0
+            st.session_state['compiled_sql']  = None
+            st.session_state['before_sql']    = None
+            st.session_state['cmd_reviewed']  = False
+            st.session_state['runner_to_gen'] = None
+            st.session_state['runner_to_val'] = None
+            # 위젯 key는 다음 rerun에서 위젯 생성 전에 처리
+            st.session_state['_runner_reset_pending'] = True
+            st.rerun()
 
     schema_ok, sc_err = check_model_schema_exists(project_dir, sel_m) if sel_m else (True, None)
 
@@ -668,7 +839,7 @@ with tab_runner:
 
     # Compile / Run
     if sel_m and target_val:
-        slc = f"{st.session_state.up_depth}+{sel_m}+{st.session_state.down_depth}"
+        slc = f"{st.session_state.up_depth}+{sel_m}+{st.session_state.down_depth}"  # dbt --select 인자: upstream_depth+model+downstream_depth 형식
         v_j = json.dumps({
             "data_interval_start": convert_to_dbt_ts(sdt),
             "data_interval_end": convert_to_dbt_ts(edt, True),
@@ -695,8 +866,7 @@ with tab_runner:
                     else:
                         st.error(rc.stderr)
             if st.session_state.before_sql:
-                st.caption("🗑️ before_sql (DELETE / TRUNCATE)")
-                st.code(st.session_state.before_sql, language="sql")
+                _render_before_sql(st.session_state.before_sql)
             if st.session_state.compiled_sql:
                 st.caption("📄 compiled SQL")
                 st.code(st.session_state.compiled_sql, language="sql")
@@ -720,39 +890,65 @@ with tab_runner:
                 with st.spinner("실행 중..."):
                     rr = subprocess.run(["dbt", "run"] + args + ["--target-path", tp],
                                         cwd=project_dir, capture_output=True, text=True)
-                    if rr.returncode == 0:
-                        st.success("Done!")
-                        cleanup_old_runs_by_date(project_dir)
-                        rdf = get_latest_run_results(project_dir)
-                        if rdf:
-                            # 현재 select 범위(업/다운스트림 포함) 모델만 필터링
-                            _sel_models = set()
-                            for _, _ms in st.session_state.up_list.items():
-                                _sel_models.update(_ms)
-                            _sel_models.add(sel_m)
-                            for _, _ms in st.session_state.down_list.items():
-                                _sel_models.update(_ms)
-                            _df = pd.DataFrame(rdf)
-                            _filtered = _df[_df['Model Name'].isin(_sel_models)] if _sel_models else _df
-                            st.dataframe(_filtered if not _filtered.empty else _df,
-                                         use_container_width=True, hide_index=True)
-                        # 검증 탭 이력 저장 (위젯 key는 버튼 클릭 시 반영)
-                        st.session_state['runner_to_val'] = {
-                            'model': sel_m,
-                            'group': m2g.get(sel_m),
-                            'sdt':   sdt,
-                            'edt':   edt,
-                        }
-                        st.info("💡 검증 탭에서 실행 결과를 바로 검증할 수 있습니다.")
-                    else:
-                        st.error("❌ Failed")
-                        st.code(rr.stdout + (rr.stderr or ""), language="bash")
+                if rr.returncode == 0:
+                    st.success("Done!")
+                    cleanup_old_runs_by_date(project_dir)
+                    rdf = get_latest_run_results(project_dir)
+                    if rdf:
+                        # 현재 select 범위(업/다운스트림 포함) 모델만 필터링
+                        _sel_models = set()
+                        for _, _ms in st.session_state.up_list.items():
+                            _sel_models.update(_ms)
+                        _sel_models.add(sel_m)
+                        for _, _ms in st.session_state.down_list.items():
+                            _sel_models.update(_ms)
+                        _df = pd.DataFrame(rdf)
+                        _filtered = _df[_df['Model Name'].isin(_sel_models)] if _sel_models else _df
+                        # 실행 결과를 session_state에 저장해 rerun 후에도 유지
+                        st.session_state['last_run_df'] = _filtered if not _filtered.empty else _df
+                    # 검증 이력 저장
+                    st.session_state['runner_to_val'] = {
+                        'model': sel_m,
+                        'group': m2g.get(sel_m),
+                        'sdt':   sdt,
+                        'edt':   edt,
+                    }
+                else:
+                    st.session_state['last_run_df'] = None
+                    st.error("❌ Failed")
+                    st.code(rr.stdout + (rr.stderr or ""), language="bash")
+
+            # 실행 결과 표시 (session_state에서 유지)
+            if st.session_state.get('last_run_df') is not None:
+                st.dataframe(st.session_state['last_run_df'],
+                             use_container_width=True, hide_index=True)
+
+            # 검증 실행 버튼 — 직전 실행 이력이 있을 때 상시 표시
+            _r2v_exists = bool(st.session_state.get('runner_to_val'))
+            if _r2v_exists:
+                if st.button("🔍 검증 실행", type="primary", use_container_width=True,
+                             key="btn_open_val_dialog"):
+                    st.session_state['_open_val_dialog'] = True
+                    st.rerun()  # tab_generator st.stop() 전에 rerun 종료
 
 # ============================================================
 # TAB 2 : YAML Generator (구 Streamlit Generator + 구 CLI 통합)
 # ============================================================
 with tab_generator:
-    st.subheader("🛠 YAML Generator")
+    _gh1, _gh2 = st.columns([4, 1])
+    with _gh1:
+        st.subheader("🛠 YAML Generator")
+    with _gh2:
+        st.write("")
+        if st.button("🔄 초기화", key="btn_reset_gen", use_container_width=True):
+            st.session_state['_gen_key_ver']      += 1   # 위젯 key 변경 → 자동 초기화
+            st.session_state['gen_sc']            = None
+            st.session_state['gen_analysis_data'] = None
+            st.session_state['gen_is_applied']    = False
+            st.session_state['runner_to_gen']     = None
+            st.rerun()
+
+    _gv = st.session_state['_gen_key_ver']
 
     if not target_val:
         st.warning("사이드바에서 Target을 먼저 선택해주세요.")
@@ -805,12 +1001,15 @@ with tab_generator:
                 st.rerun()
 
     def _gen_reset_analysis():
+        """스키마/테이블 선택 변경 시 이전 분석 결과를 초기화."""
         st.session_state.gen_analysis_data = None
         st.session_state.gen_is_applied    = False
 
     cg1, cg2 = st.columns(2)
     with cg1:
-        gen_sc = st.selectbox("📂 DB Schema 선택", schemas, key="gen_sb_schema",
+        gen_sc = st.selectbox("📂 DB Schema 선택", schemas,
+                              index=None, placeholder="📂 스키마를 선택하세요",
+                              key=f"gen_sb_schema_{_gv}",
                               on_change=_gen_reset_analysis)
 
     # gen_sc 세션 동기화 (분석 시작 버튼 클릭 시점 스코프 보장)
@@ -820,7 +1019,7 @@ with tab_generator:
     if gen_sc:
         try:
             all_tables = get_db_tables(db_config, gen_sc)
-            st.multiselect("📊 대상 테이블 선택", all_tables, key="gen_ms_tables",
+            st.multiselect("📊 대상 테이블 선택", all_tables, key=f"gen_ms_tables_{_gv}",
                            on_change=_gen_reset_analysis)
         except Exception as e:
             st.error(f"테이블 목록 조회 실패: {e}")
@@ -828,7 +1027,7 @@ with tab_generator:
     # --- 분석 실행 ---
     if st.button("🔍 분석 시작 (Run Analysis)", type="primary"):
         current_sc = st.session_state.get('gen_sc')
-        selected_tables = st.session_state.get('gen_ms_tables', [])
+        selected_tables = st.session_state.get(f'gen_ms_tables_{_gv}', [])
 
         if not selected_tables:
             st.warning("테이블을 1개 이상 선택하세요.")
@@ -859,7 +1058,9 @@ with tab_generator:
             st.rerun()
 
     # --- 분석 결과 표시 및 적용 ---
-    _current_tables  = st.session_state.get('gen_ms_tables', [])
+    # 현재 선택된 테이블 목록과 직전 분석 결과의 테이블 목록이 일치할 때만 결과를 표시.
+    # 선택이 바뀐 경우 stale 결과 표시를 방지.
+    _current_tables  = st.session_state.get(f'gen_ms_tables_{_gv}', [])
     _analyzed_tables = [itm['name'] for itm in (st.session_state.gen_analysis_data or [])]
     _result_valid    = (
         st.session_state.gen_analysis_data and
@@ -1033,10 +1234,10 @@ def val_compile_model(project_dir, profile_dir, target_val, model_name, sdt, edt
         raise RuntimeError("compile 성공했으나 compiled SQL 파일을 찾을 수 없습니다.")
     return sql
 
-def val_get_columns_from_query(db_config, cte_sql):
+def val_get_columns_from_query(db_config, cte_sql, conn=None):
     """CTE SQL을 LIMIT 0으로 실행해 컬럼 목록(이름, 타입코드) 반환"""
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         cur.execute(f"SELECT * FROM ({cte_sql}) _q LIMIT 0")
         return [(desc[0], desc[1]) for desc in cur.description]
 
@@ -1088,55 +1289,55 @@ def val_get_tgt_columns(db_config, schema, table):
         )
         return [(r[0], r[1]) for r in cur.fetchall()]
 
-def val_src_count(db_config, compiled_sql):
+def val_src_count(db_config, compiled_sql, conn=None):
     """소스: CTE 기반 COUNT → (count, executed_sql)"""
     sql = f"SELECT COUNT(*) FROM (\n{compiled_sql}\n) _src"
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         cur.execute(sql)
         return cur.fetchone()[0], sql
 
-def val_tgt_count(db_config, schema, table, date_filter=None):
+def val_tgt_count(db_config, schema, table, date_filter=None, conn=None):
     """타겟: 테이블 직접 COUNT → (count, executed_sql)"""
     where = f'\nWHERE {date_filter["where_clause"]}' if date_filter else ""
     sql   = f'SELECT COUNT(*)\nFROM "{schema}"."{table}"{where}'
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         cur.execute(sql)
         return cur.fetchone()[0], sql
 
-def val_src_sum(db_config, compiled_sql, num_cols):
+def val_src_sum(db_config, compiled_sql, num_cols, conn=None):
     """소스: CTE 기반 숫자컬럼 SUM → (sums_dict, executed_sql)"""
     if not num_cols:
         return {}, None
     sum_expr = ",\n  ".join([f'SUM("{c}") AS "{c}"' for c in num_cols])
     sql = f'SELECT\n  {sum_expr}\nFROM (\n{compiled_sql}\n) _src'
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         cur.execute(sql)
         row = cur.fetchone()
         return {c: (float(row[i]) if row[i] is not None else None) for i, c in enumerate(num_cols)}, sql
 
-def val_tgt_sum(db_config, schema, table, num_cols, date_filter=None):
+def val_tgt_sum(db_config, schema, table, num_cols, date_filter=None, conn=None):
     """타겟: 테이블 직접 숫자컬럼 SUM → (sums_dict, executed_sql)"""
     if not num_cols:
         return {}, None
     sum_expr = ",\n  ".join([f'SUM("{c}") AS "{c}"' for c in num_cols])
     where    = f'\nWHERE {date_filter["where_clause"]}' if date_filter else ""
     sql      = f'SELECT\n  {sum_expr}\nFROM "{schema}"."{table}"{where}'
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         cur.execute(sql)
         row = cur.fetchone()
         return {c: (float(row[i]) if row[i] is not None else None) for i, c in enumerate(num_cols)}, sql
 
-def val_src_sample(db_config, compiled_sql, limit):
+def val_src_sample(db_config, compiled_sql, limit, conn=None):
     """소스: CTE 기반 샘플 → (df, executed_sql)"""
     sql = f"SELECT * FROM (\n{compiled_sql}\n) _src LIMIT {limit}"
-    with get_conn(db_config) as conn:
-        return pd.read_sql(sql, conn), sql
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        return pd.read_sql(sql, c), sql
 
-def val_tgt_sample_matched(db_config, schema, table, src_row, pk_cols, all_cols):
+def val_tgt_sample_matched(db_config, schema, table, src_row, pk_cols, all_cols, conn=None):
     """
     타겟: 소스 샘플 행 1건에 대응하는 행을 타겟 테이블에서 조회 (fallback용).
     PK 있으면 PK로, 없으면 전 컬럼 WHERE 조건. NULL은 IS NULL 처리.
@@ -1149,19 +1350,20 @@ def val_tgt_sample_matched(db_config, schema, table, src_row, pk_cols, all_cols)
         if val is None or (isinstance(val, float) and pd.isna(val)):
             conditions.append(f'"{col}" IS NULL')
         else:
+            native_val = val.item() if hasattr(val, 'item') else val  # numpy scalar → Python native
             conditions.append(f'"{col}" = %s')
-            params.append(val)
+            params.append(native_val)
 
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
     sql = f'SELECT * FROM "{schema}"."{table}" WHERE {where_clause} LIMIT 1'
 
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         actual_sql = cur.mogrify(sql, params if params else None).decode('utf-8')
-        df = pd.read_sql(sql, conn, params=params if params else None)
+        df = pd.read_sql(sql, c, params=params if params else None)
     return df, actual_sql
 
-def val_tgt_sample_batch(db_config, schema, table, src_df, pk_cols, all_cols):
+def val_tgt_sample_batch(db_config, schema, table, src_df, pk_cols, all_cols, conn=None):
     """
     타겟: 소스 샘플 N건을 IN 절 일괄 조회 (개별 쿼리 대비 N배 빠름).
     - 단일 PK: WHERE col IN (v1, v2, ...)
@@ -1173,13 +1375,18 @@ def val_tgt_sample_batch(db_config, schema, table, src_df, pk_cols, all_cols):
         rows, sqls = [], []
         for _, row in src_df.iterrows():
             df, q = val_tgt_sample_matched(db_config, schema, table,
-                                           row.to_dict(), [], all_cols)
+                                           row.to_dict(), [], all_cols, conn=conn)
             rows.append(df)
             sqls.append(q)
         tgt_df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=all_cols)
         return tgt_df, "\n\n-- 다음 행\n".join(sqls)
 
-    rows_data = [tuple(row[c] for c in pk_cols) for _, row in src_df.iterrows()]
+    # numpy scalar → native Python type (np.float64 등이 psycopg2 파라미터로 전달되면 오류)
+    def _to_native(v):
+        """numpy scalar를 Python 기본 타입으로 변환. psycopg2 파라미터 전달 오류 방지."""
+        return v.item() if hasattr(v, 'item') else v
+
+    rows_data = [tuple(_to_native(row[c]) for c in pk_cols) for _, row in src_df.iterrows()]
 
     if len(pk_cols) == 1:
         col   = pk_cols[0]
@@ -1193,10 +1400,10 @@ def val_tgt_sample_batch(db_config, schema, table, src_df, pk_cols, all_cols):
         sql      = f'SELECT * FROM "{schema}"."{table}" WHERE ({col_list}) IN ({row_ph})'
         params   = [v for row in rows_data for v in row]
 
-    with get_conn(db_config) as conn:
-        cur = conn.cursor()
+    with (nullcontext(conn) if conn else get_conn(db_config)) as c:
+        cur = c.cursor()
         actual_sql = cur.mogrify(sql, params).decode('utf-8')
-        tgt_df = pd.read_sql(sql, conn, params=params)
+        tgt_df = pd.read_sql(sql, c, params=params)
     return tgt_df, actual_sql
 
 def val_compare_results(src_result, tgt_result):
@@ -1237,67 +1444,288 @@ def val_compare_results(src_result, tgt_result):
     return rows
 
 
-with tab_validator:
-    st.subheader("🔍 데이터 검증")
+def fetch_verification_history(db_config, model_name=None, start_dt=None, end_dt=None):
+    """admin.verification_summary 조회 → DataFrame"""
+    conditions = []
+    params     = []
+    if model_name:
+        conditions.append("model_name = %s")
+        params.append(model_name)
+    if start_dt:
+        conditions.append("verification_date >= %s")
+        params.append(start_dt)
+    if end_dt:
+        conditions.append("verification_date < %s")
+        params.append(end_dt)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = f"""
+        SELECT uuid, model_name, verification_date,
+               query_condition_start, query_condition_end,
+               count_status, sum_status, sample_status
+          FROM admin.verification_summary
+        {where}
+         ORDER BY verification_date DESC
+         LIMIT 200
+    """
+    with get_conn(db_config) as conn:
+        return pd.read_sql(sql, conn, params=params or None)
+
+
+def fetch_verification_detail(db_config, uuid):
+    """uuid 기준으로 count/sum/sample 상세 조회 → dict"""
+    result = {}
+    with get_conn(db_config) as conn:
+        for tbl, key in [
+            ('verification_count',  'count'),
+            ('verification_sum',    'sum'),
+            ('verification_sample', 'sample'),
+        ]:
+            try:
+                df = pd.read_sql(
+                    f"SELECT * FROM admin.{tbl} WHERE uuid = %s", conn, params=(uuid,)
+                )
+                result[key] = df.iloc[0].to_dict() if not df.empty else None
+            except Exception:
+                result[key] = None
+    return result
+
+
+def fetch_dbt_log(db_config, model_name=None, start_dt=None, end_dt=None):
+    """admin.dbt_log 조회 → DataFrame"""
+    conditions = []
+    params     = []
+    if model_name:
+        conditions.append("model_name = %s")
+        params.append(model_name)
+    if start_dt:
+        conditions.append("start_time >= %s")
+        params.append(start_dt)
+    if end_dt:
+        conditions.append("start_time < %s")
+        params.append(end_dt)
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = f"""
+        SELECT dbt_invocation_id, model_name, status,
+               start_time, end_time, execution_time_seconds,
+               rows_affected, airflow_run_id, variables
+          FROM admin.dbt_log
+        {where}
+         ORDER BY start_time DESC
+         LIMIT 200
+    """
+    with get_conn(db_config) as conn:
+        return pd.read_sql(sql, conn, params=params or None)
+
+
+def insert_verification_to_db(db_config, vr, r, compiled_sql):
+    """검증 결과를 admin 스키마 4개 테이블에 저장하고 uuid 반환"""
+    tbl      = vr['model']
+    run_uuid = str(uuid.uuid4())
+    run_at   = datetime.strptime(vr['run_at'], '%Y-%m-%d %H:%M:%S')
+    queries  = vr.get('queries', {})
+
+    try:
+        sdt = datetime.strptime(vr['sdt'], '%Y-%m-%d') if vr.get('sdt') else None
+        edt = datetime.strptime(vr['edt'], '%Y-%m-%d') if vr.get('edt') else None
+    except Exception:
+        sdt = edt = None
+
+    # count_status
+    count_status = None
+    if vr.get('do_count') and r.get('count_match') is not None:
+        count_status = 'PASS' if r['count_match'] else 'FAIL'
+
+    # sum_status
+    sum_status = None
+    if vr.get('do_sum'):
+        sum_status = 'PASS' if r.get('sum_all_match') else 'FAIL'
+
+    # sample_status: src/tgt DataFrame 비교
+    sample_status = None
+    if vr.get('do_sample'):
+        src_df = vr['src'][tbl].get('sample')
+        tgt_df = vr['tgt'][tbl].get('sample')
+        if src_df is not None and tgt_df is not None and not src_df.empty and not tgt_df.empty:
+            common_cols = [c for c in src_df.columns if c in tgt_df.columns]
+            has_diff    = False
+            for idx in range(min(len(src_df), len(tgt_df))):
+                for col in common_cols:
+                    sv, tv = src_df.iloc[idx][col], tgt_df.iloc[idx][col]
+                    both_nan = pd.isna(sv) and pd.isna(tv)
+                    try:
+                        differ = float(sv) != float(tv)
+                    except (TypeError, ValueError):
+                        differ = str(sv) != str(tv)
+                    if not both_nan and differ:
+                        has_diff = True
+                        break
+                if has_diff:
+                    break
+            sample_status = 'FAIL' if has_diff else 'PASS'
+        elif src_df is not None and tgt_df is not None:
+            sample_status = 'PASS'
+
+    with get_conn(db_config) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO admin.verification_summary
+                    (model_name, uuid, query_condition_start, query_condition_end,
+                     count_status, sum_status, sample_status, compiled_sql, verification_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (tbl, run_uuid, sdt, edt, count_status, sum_status, sample_status,
+                 compiled_sql, run_at),
+            )
+
+            if vr.get('do_count'):
+                cur.execute(
+                    """
+                    INSERT INTO admin.verification_count
+                        (model_name, uuid, source_count_result, target_count_result,
+                         source_count_sql, target_count_sql, verification_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        tbl, run_uuid,
+                        r.get('src_count'), r.get('tgt_count'),
+                        queries.get('count', {}).get('src'),
+                        queries.get('count', {}).get('tgt'),
+                        run_at,
+                    ),
+                )
+
+            if vr.get('do_sum'):
+                src_sums = vr['src'][tbl].get('sums', {})
+                tgt_sums = vr['tgt'][tbl].get('sums', {})
+                cur.execute(
+                    """
+                    INSERT INTO admin.verification_sum
+                        (model_name, uuid, source_sum_result, target_sum_result,
+                         source_sum_sql, target_sum_sql, verification_date)
+                    VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+                    """,
+                    (
+                        tbl, run_uuid,
+                        json.dumps(src_sums, default=str),
+                        json.dumps(tgt_sums, default=str),
+                        queries.get('sum', {}).get('src'),
+                        queries.get('sum', {}).get('tgt'),
+                        run_at,
+                    ),
+                )
+
+            if vr.get('do_sample'):
+                _src_df = vr['src'][tbl].get('sample')
+                _tgt_df = vr['tgt'][tbl].get('sample')
+                src_json = json.dumps(_src_df.to_dict(orient='records'), default=str, ensure_ascii=False) if _src_df is not None else None
+                tgt_json = json.dumps(_tgt_df.to_dict(orient='records'), default=str, ensure_ascii=False) if _tgt_df is not None else None
+                cur.execute(
+                    """
+                    INSERT INTO admin.verification_sample
+                        (model_name, uuid, source_sample_result, target_sample_result,
+                         source_sample_sql, target_sample_sql, verification_date)
+                    VALUES (%s, %s, %s::jsonb, %s::jsonb, %s, %s, %s)
+                    """,
+                    (
+                        tbl, run_uuid,
+                        src_json, tgt_json,
+                        queries.get('sample', {}).get('src'),
+                        queries.get('sample', {}).get('tgt'),
+                        run_at,
+                    ),
+                )
+
+        conn.commit()
+
+    return run_uuid
+
+
+def _style_sample_df(df, other_df, common_cols, diff_color):
+    """other_df와 값이 다른 셀을 diff_color로 하이라이트한 Styler 반환."""
+    n = min(len(df), len(other_df))
+    style_df = pd.DataFrame('', index=df.index, columns=df.columns)
+    for idx in range(n):
+        for col in common_cols:
+            if col not in df.columns or col not in other_df.columns:
+                continue
+            sv = df.iloc[idx][col]
+            ov = other_df.iloc[idx][col]
+            both_nan = pd.isna(sv) and pd.isna(ov)
+            try:
+                differ = float(sv) != float(ov)
+            except (TypeError, ValueError):
+                differ = str(sv) != str(ov)
+            if not both_nan and differ:
+                style_df.iloc[idx, df.columns.get_loc(col)] = f'background-color: {diff_color}'
+    return df.style.apply(lambda _: style_df, axis=None)
+
+
+def render_validation_ui():
+    """검증 UI — 탭과 다이얼로그에서 공용으로 사용"""
+    _vv = st.session_state['_val_key_ver']   # 맨 위로 이동 — btn_reset_val 키에 사용
+    _vh1, _vh2 = st.columns([4, 1])
+    with _vh1:
+        st.subheader("🔍 데이터 검증")
+    with _vh2:
+        st.write("")
+        if st.button("🔄 초기화", key=f"btn_reset_val_{_vv}", use_container_width=True):
+            st.session_state['_val_key_ver']       += 1   # 위젯 key 변경 → 자동 초기화
+            st.session_state['val_tgt_sc']         = None
+            st.session_state['val_results']        = None
+            st.session_state['val_compiled_sql']   = None
+            st.session_state['val_compiled_model'] = None
+            st.session_state['val_before_sql']     = None
+            st.session_state['val_date_filter']    = None
+            st.session_state['val_direct_where']   = ""
+            st.session_state['val_custom_start']   = ""
+            st.session_state['val_custom_end']     = ""
+            st.session_state['val_exclude_cols']   = ['dbt_dtm']
+            st.session_state['runner_to_val']      = None
+            st.rerun()
 
     if not target_val:
         st.warning("사이드바에서 Target을 먼저 선택해주세요.")
-        st.stop()
+        return
 
     db_config_val = get_db_config(profile_dir, target_val)
     if not db_config_val:
         st.error("DB 설정을 불러올 수 없습니다.")
-        st.stop()
+        return
 
     try:
         val_schemas = get_schemas(db_config_val)
     except Exception as e:
-        st.error(f"DB 연결 실패: {e}"); st.stop()
+        st.error(f"DB 연결 실패: {e}"); return
 
-    # ── Runner 이력 가져오기 버튼 ────────────────────────────
-    r2v = st.session_state.get('runner_to_val')
-    if r2v:
-        rc1, rc2 = st.columns([3, 1])
-        with rc1:
-            st.caption(
-                f"📋 직전 Runner 이력 — "
-                f"모델: `{r2v['model']}` | "
-                f"기간: {r2v['sdt']} ~ {r2v['edt']}"
-            )
-        with rc2:
-            if st.button("📥 이력 가져오기", use_container_width=True):
-                st.session_state['val_sb_group']   = r2v['group']
-                st.session_state['val_sb_model']   = r2v['model']
-                st.session_state['val_sdt']        = r2v['sdt']
-                st.session_state['val_edt']        = r2v['edt']
-                st.session_state['runner_to_val']  = None  # 배너 클리어
-                st.rerun()
 
     # ── 1. 모델 / 타겟 스키마 선택 ──────────────────────────
     st.markdown("#### 1. 모델 및 타겟 스키마 선택")
 
-    val_hierarchy, val_m2g = get_dbt_model_hierarchy(project_dir)
+    val_hierarchy, _ = get_dbt_model_hierarchy(project_dir)
 
     def _val_reset():
+        """모델/날짜 위젯 변경 시 검증 결과와 컴파일 캐시를 초기화."""
         st.session_state['val_results']      = None
         st.session_state['val_compiled_sql']  = None
         st.session_state['val_compiled_model'] = None
         st.session_state['val_before_sql']    = None
         st.session_state['val_date_filter']   = None
+        st.session_state['val_direct_where']  = ""
 
     val_gp_p  = "📂 그룹 선택"
     vi1, vi2  = st.columns(2)
     with vi1:
         val_sel_g = st.selectbox(
             "📁 모델 그룹", [val_gp_p] + list(val_hierarchy.keys()),
-            key="val_sb_group", on_change=_val_reset
+            key=f"val_sb_group_{_vv}", on_change=_val_reset
         )
         val_sel_m = None
         if val_sel_g != val_gp_p:
             val_mp_p  = "📂 모델 선택"
             val_mv    = st.selectbox(
                 "📂 모델", [val_mp_p] + val_hierarchy[val_sel_g],
-                key="val_sb_model", on_change=_val_reset
+                key=f"val_sb_model_{_vv}", on_change=_val_reset
             )
             if val_mv != val_mp_p:
                 val_sel_m = val_mv
@@ -1325,13 +1753,13 @@ with tab_validator:
                 _schema_warn = f"⚠️ DB에 `{val_sel_m}` 테이블이 없습니다."
             elif len(_schema_candidates) == 1:
                 # 후보가 1개면 session_state를 자동으로 덮어써서 selectbox에 반영
-                if st.session_state.get('val_sb_tgt_sc') != _schema_candidates[0]:
-                    st.session_state['val_sb_tgt_sc'] = _schema_candidates[0]
+                if st.session_state.get(f'val_sb_tgt_sc_{_vv}') != _schema_candidates[0]:
+                    st.session_state[f'val_sb_tgt_sc_{_vv}'] = _schema_candidates[0]
 
         val_tgt_sc = st.selectbox(
             "📂 타겟 스키마",
             val_schemas,
-            key="val_sb_tgt_sc",
+            key=f"val_sb_tgt_sc_{_vv}",
             help="모델명과 일치하는 테이블이 있는 스키마를 자동 탐색합니다."
         )
         st.session_state['val_tgt_sc'] = val_tgt_sc
@@ -1356,12 +1784,14 @@ with tab_validator:
     with vd1:
         val_sdt = st.date_input(
             "📅 data_interval_start",
-            key="val_sdt", on_change=_val_reset
+            value=datetime.now().date() - timedelta(days=4),
+            key=f"val_sdt_{_vv}", on_change=_val_reset
         )
     with vd2:
         val_edt = st.date_input(
             "📅 data_interval_end",
-            key="val_edt", on_change=_val_reset
+            value=datetime.now().date() - timedelta(days=1),
+            key=f"val_edt_{_vv}", on_change=_val_reset
         )
 
     val_date_invalid = False
@@ -1373,20 +1803,21 @@ with tab_validator:
     st.markdown("#### 3. 검증 항목")
     vo1, vo2, vo3 = st.columns(3)
     with vo1:
-        do_count  = st.checkbox("행 수 (COUNT) 비교", value=True, key="val_chk_count")
+        do_count  = st.checkbox("행 수 (COUNT) 비교", value=True, key=f"val_chk_count_{_vv}")
     with vo2:
-        do_sum    = st.checkbox("숫자 컬럼 SUM 비교", value=True, key="val_chk_sum")
+        do_sum    = st.checkbox("숫자 컬럼 SUM 비교", value=True, key=f"val_chk_sum_{_vv}")
     with vo3:
-        do_sample = st.checkbox("샘플 데이터 비교",   value=True, key="val_chk_sample")
+        do_sample = st.checkbox("샘플 데이터 비교",   value=True, key=f"val_chk_sample_{_vv}")
 
     sample_limit = 5
     if do_sample:
         sample_limit = st.slider(
             "샘플 행 수", min_value=5, max_value=100,
-            value=5, step=5, key="val_sample_limit"
+            value=5, step=5, key=f"val_sample_limit_{_vv}"
         )
 
     # ── 4. 타겟 날짜 필터 (COUNT / SUM 용) ──────────────────
+    _sql_has_dates = False   # 검증 실행 버튼 disable 판단용 (section 4 내부에서 설정)
     if (do_count or do_sum) and val_sel_m and _schema_candidates:
         st.markdown("#### 4. 타겟 날짜 조건 (COUNT / SUM)")
         st.caption("타겟 테이블에 적용할 날짜 필터를 설정하세요. 선택하지 않으면 전체 데이터 기준으로 비교합니다.")
@@ -1399,7 +1830,19 @@ with tab_validator:
         _date_first = [c for c, t in _tgt_cols if any(d in t for d in ['date', 'timestamp', 'time'])]
         _other_cols = [c for c, t in _tgt_cols if c not in _date_first]
         _col_type   = {c: t for c, t in _tgt_cols}
-        _col_opts   = ["(조건 없음)"] + _date_first + _other_cols
+
+        # before_sql 날짜 컬럼 감지 + {{start}}/{{end}} 존재 여부
+        _raw_model_sql = _get_model_raw_sql(project_dir, val_sel_m)
+        _before_col    = _detect_before_sql_date_col(_raw_model_sql)
+        _sql_has_dates = _has_date_vars(_raw_model_sql)
+
+        # ⚡ 아이콘: before_sql에서 감지된 컬럼에 접두사
+        _col_opts_plain   = ["(조건 없음)"] + _date_first + _other_cols
+        _col_opts_display = [
+            f"⚡ {c}" if (_before_col and c == _before_col) else c
+            for c in _col_opts_plain
+        ]
+        _col_opts_display.append("✏️ 직접 입력")
 
         # PostgreSQL 타입 → 캐스트 문자열
         _cast_map = {
@@ -1410,95 +1853,140 @@ with tab_validator:
             'time with time zone':         '::timetz',
         }
 
+        # 날짜 컬럼 선택(드롭다운)과 직접 입력(텍스트) 두 경로로 분기.
+        # _is_direct_input=True이면 WHERE 절 전체를 사용자가 직접 입력하고,
+        # False이면 컬럼명을 선택해 날짜 범위 조건을 자동 생성한다.
         vf1, vf2 = st.columns([2, 2])
         with vf1:
-            _sel_filter_col = st.selectbox(
-                "날짜 컬럼 선택", _col_opts, key="val_filter_col"
+            _sel_filter_col_raw = st.selectbox(
+                "날짜 컬럼 선택", _col_opts_display, key=f"val_filter_col_{_vv}"
+            )
+            _is_direct_input = (_sel_filter_col_raw == "✏️ 직접 입력")
+            _sel_filter_col  = _sel_filter_col_raw.replace("⚡ ", "") if not _is_direct_input else "✏️ 직접 입력"
+            if not _sql_has_dates and not _is_direct_input:
+                st.caption("ℹ️ 모델에 날짜 조건이 없습니다.")
+
+        # 직접 입력 모드
+        _direct_where = ""
+        if _is_direct_input:
+            _direct_where = st.text_area(
+                "WHERE 절 직접 입력 (컬럼명 포함 전체 조건)",
+                value=st.session_state.get('val_direct_where', ''),
+                placeholder='예) customer_id IN (SELECT customer_id FROM stg.stg_receipts WHERE order_date BETWEEN \'2026-01-01 00:00:00\'::timestamp AND \'2026-01-02 23:59:59\'::timestamp)',
+                height=100,
+                key=f"val_direct_where_input_{_vv}",
             )
 
-        # 타입 판별
-        _sel_col_type = _col_type.get(_sel_filter_col, "") if _sel_filter_col != "(조건 없음)" else ""
-        _is_dt        = any(t in _sel_col_type for t in ['date', 'timestamp', 'time'])
-        _cast         = next((v for k, v in _cast_map.items() if k in _sel_col_type), '')
+        if not _is_direct_input:
+            # 타입 판별
+            _sel_col_type = _col_type.get(_sel_filter_col, "") if _sel_filter_col != "(조건 없음)" else ""
+            _is_dt        = any(t in _sel_col_type for t in ['date', 'timestamp', 'time'])
+            _cast         = next((v for k, v in _cast_map.items() if k in _sel_col_type), '')
 
-        # 사용자 정의 체크박스: date/timestamp면 비활성화
-        with vf2:
-            if _sel_filter_col != "(조건 없음)" and not _is_dt:
-                _use_custom = st.checkbox(
-                    "사용자 정의 조건 입력",
-                    key="val_chk_custom",
-                )
-            else:
-                _use_custom = False
-                if _sel_filter_col != "(조건 없음)":
-                    st.checkbox(
+            # 사용자 정의 체크박스: date/timestamp면 비활성화
+            with vf2:
+                if _sel_filter_col != "(조건 없음)" and not _is_dt:
+                    _use_custom = st.checkbox(
                         "사용자 정의 조건 입력",
-                        key="val_chk_custom",
-                        value=False,
-                        disabled=True,
-                        help="date/timestamp 타입은 자동으로 타임스탬프 형태로 조건이 생성됩니다."
+                        key=f"val_chk_custom_{_vv}",
                     )
+                else:
+                    _use_custom = False
+                    if _sel_filter_col != "(조건 없음)":
+                        st.checkbox(
+                            "사용자 정의 조건 입력",
+                            key=f"val_chk_custom_{_vv}",
+                            value=False,
+                            disabled=True,
+                            help="date/timestamp 타입은 자동으로 타임스탬프 형태로 조건이 생성됩니다."
+                        )
 
-        # 사용자 정의 입력 (varchar 등 비날짜 컬럼)
-        _custom_start, _custom_end = None, None
-        if _sel_filter_col != "(조건 없음)" and _use_custom:
-            _default_start = f"'{val_sdt} 00:00:00'"
-            _default_end   = f"'{val_edt} 23:59:59'"
-            vc1, vc2 = st.columns(2)
-            with vc1:
-                _custom_start = st.text_input(
-                    "시작 값",
-                    value=st.session_state.get('val_custom_start') or _default_start,
-                    placeholder=f'예) {_default_start}',
-                    key="val_custom_start_input"
-                )
-            with vc2:
-                _custom_end = st.text_input(
-                    "종료 값",
-                    value=st.session_state.get('val_custom_end') or _default_end,
-                    placeholder=f'예) {_default_end}',
-                    key="val_custom_end_input"
-                )
-            if _custom_start and _custom_end:
-                st.caption(
-                    f"적용 예시: `\"{_sel_filter_col}\" >= {_custom_start}"
-                    f" AND \"{_sel_filter_col}\" <= {_custom_end}`"
-                )
+            # 사용자 정의 입력 (varchar 등 비날짜 컬럼)
+            _custom_start, _custom_end = None, None
+            if _sel_filter_col != "(조건 없음)" and _use_custom:
+                _default_start = f"'{val_sdt} 00:00:00'"
+                _default_end   = f"'{val_edt} 23:59:59'"
+                vc1, vc2 = st.columns(2)
+                with vc1:
+                    _custom_start = st.text_input(
+                        "시작 값",
+                        value=st.session_state.get('val_custom_start') or _default_start,
+                        placeholder=f'예) {_default_start}',
+                        key=f"val_custom_start_input_{_vv}"
+                    )
+                with vc2:
+                    _custom_end = st.text_input(
+                        "종료 값",
+                        value=st.session_state.get('val_custom_end') or _default_end,
+                        placeholder=f'예) {_default_end}',
+                        key=f"val_custom_end_input_{_vv}"
+                    )
+                if _custom_start and _custom_end:
+                    st.caption(
+                        f"적용 예시: `\"{_sel_filter_col}\" >= {_custom_start}"
+                        f" AND \"{_sel_filter_col}\" <= {_custom_end}`"
+                    )
+        else:
+            _use_custom   = False
+            _sel_col_type = ""
+            _is_dt        = False
+            _cast         = ""
+            _custom_start = None
+            _custom_end   = None
 
         # 쿼리에 반영 버튼
-        _apply_disabled = _sel_filter_col == "(조건 없음)"
+        if _is_direct_input:
+            _apply_disabled = not _direct_where.strip()
+        else:
+            _apply_disabled = _sel_filter_col == "(조건 없음)"
         bc1, bc2 = st.columns([3, 1])
         with bc2:
             if st.button("✅ 쿼리에 반영", use_container_width=True, disabled=_apply_disabled):
-                if _use_custom:
+                if _is_direct_input:
+                    _where = _direct_where.strip()
+                    # macOS 스마트 따옴표 → ASCII 직선 따옴표 정규화
+                    _where = _where.replace('\u2018', "'").replace('\u2019', "'")
+                    _where = _where.replace('\u201c', '"').replace('\u201d', '"')
+                    st.session_state['val_direct_where'] = _where
+                    st.session_state['val_date_filter'] = {
+                        'col':          '직접 입력',
+                        'start':        '',
+                        'end':          '',
+                        'where_clause': _where,
+                    }
+                elif _use_custom:
                     # varchar 등: 입력값 그대로 사용
                     _sv    = _custom_start or ""
                     _ev    = _custom_end   or ""
                     _where = f'"{_sel_filter_col}" >= {_sv} AND "{_sel_filter_col}" <= {_ev}'
                     st.session_state['val_custom_start'] = _custom_start
                     st.session_state['val_custom_end']   = _custom_end
+                    st.session_state['val_date_filter'] = {
+                        'col':          _sel_filter_col,
+                        'start':        _sv,
+                        'end':          _ev,
+                        'where_clause': _where,
+                    }
                 else:
                     # date/timestamp: 값은 타임스탬프 문자열 + ::타입 캐스팅
                     _sv    = f"'{val_sdt} 00:00:00'{_cast}"
                     _ev    = f"'{val_edt} 23:59:59'{_cast}"
                     _where = f'"{_sel_filter_col}" BETWEEN {_sv} AND {_ev}'
-                st.session_state['val_date_filter'] = {
-                    'col':          _sel_filter_col,
-                    'start':        _sv,
-                    'end':          _ev,
-                    'where_clause': _where,
-                }
-                st.rerun()
+                    st.session_state['val_date_filter'] = {
+                        'col':          _sel_filter_col,
+                        'start':        _sv,
+                        'end':          _ev,
+                        'where_clause': _where,
+                    }
         with bc1:
             _cur_filter = st.session_state.get('val_date_filter')
             if _cur_filter:
                 st.code(_cur_filter['where_clause'], language="sql")
 
         # 필터 초기화
-        if _sel_filter_col == "(조건 없음)" and st.session_state.get('val_date_filter'):
+        if _sel_filter_col == "(조건 없음)" and not _is_direct_input and st.session_state.get('val_date_filter'):
             if st.button("🗑 필터 초기화"):
                 st.session_state['val_date_filter'] = None
-                st.rerun()
     else:
         st.session_state['val_date_filter'] = None
 
@@ -1516,7 +2004,7 @@ with tab_validator:
             "제외 컬럼",
             options=_excl_col_opts,
             default=_default_excl,
-            key="val_exclude_cols_ms",
+            key=f"val_exclude_cols_ms_{_vv}",
         )
         st.session_state['val_exclude_cols'] = _selected_excl
 
@@ -1525,7 +2013,12 @@ with tab_validator:
     # ── Compile / 검증 실행 버튼 분리 ───────────────────────
     _tbl_missing  = bool(val_sel_m and not _schema_candidates)
     _base_disabled = not val_sel_m or val_date_invalid or _tbl_missing
-    _run_disabled  = _base_disabled or not (do_count or do_sum or do_sample)
+    _date_apply_needed = (
+        _sql_has_dates and val_sel_m and _schema_candidates and
+        (do_count or do_sum) and
+        st.session_state.get('val_date_filter') is None
+    )
+    _run_disabled  = _base_disabled or not (do_count or do_sum or do_sample) or _date_apply_needed
 
     btn_c1, btn_c2 = st.columns(2)
 
@@ -1555,25 +2048,67 @@ with tab_validator:
             st.session_state.get('val_compiled_sql') and
             st.session_state.get('val_compiled_model') == val_sel_m
         )
+        _run_help = (
+            "날짜 조건을 선택 후 '✅ 쿼리에 반영'을 눌러주세요." if _date_apply_needed else
+            "Compile을 먼저 실행하세요." if not _compiled_ready else None
+        )
         if st.button(
             "▶️ 검증 실행", type="primary", use_container_width=True,
             disabled=_run_disabled or not _compiled_ready,
-            help="Compile을 먼저 실행하세요." if not _compiled_ready else None
+            help=_run_help
         ):
             compiled_sql = st.session_state['val_compiled_sql']
             status_box   = st.empty()
             prog         = st.progress(0)
 
-            # 컬럼 메타 수집
+            # ── before_sql 체크된 구문 수집 ─────────────────────
+            # 체크박스가 선택된 구문만 추려 단일 커넥션으로 순차 실행.
+            # 미체크 구문(예: DELETE/TRUNCATE)은 이 목록에 포함되지 않아 실행 생략.
+            _bsql_all = [
+                s.strip() for s in
+                (st.session_state.get('val_before_sql') or '').split(';') if s.strip()
+            ]
+            _bsql_to_run = [
+                s for i, s in enumerate(_bsql_all)
+                if st.session_state.get(f'val_bsql_check_{i}_{_vv}', False)
+            ]
+
+            # before_sql 체크된 구문이 있으면 단일 커넥션 생성 (temp table 공유)
+            _raw_conn = None
+            if _bsql_to_run:
+                _raw_conn = psycopg2.connect(
+                    host=db_config_val['host'], port=db_config_val['port'],
+                    dbname=db_config_val['dbname'],
+                    user=db_config_val['user'], password=db_config_val['password']
+                )
+
+            # before_sql 실행 (temp table 생성 등)
+            if _bsql_to_run and _raw_conn:
+                status_box.info(f"before_sql 실행 중 ({len(_bsql_to_run)}개 구문)...")
+                try:
+                    _bsql_cur = _raw_conn.cursor()
+                    for _bstmt in _bsql_to_run:
+                        _bsql_cur.execute(_bstmt)
+                    _raw_conn.commit()
+                except Exception as _be:
+                    _raw_conn.close()
+                    status_box.empty(); prog.empty()
+                    st.error(f"❌ before_sql 실행 실패: {_be}"); return
+
+            _conn_arg = _raw_conn  # None이면 각 함수가 자체 커넥션 사용
+
+            # 컬럼 메타 수집 (before_sql 실행과 동일 conn — temp table 참조 가능)
             status_box.info("컬럼 메타 분석 중...")
             try:
-                col_meta = val_get_columns_from_query(db_config_val, compiled_sql)
+                col_meta = val_get_columns_from_query(db_config_val, compiled_sql, conn=_conn_arg)
                 all_cols = [c[0] for c in col_meta]
                 num_cols = [c[0] for c in col_meta if c[1] in _NUMERIC_OIDS]
                 pk_cols  = val_get_pk(db_config_val, val_tgt_sc, val_sel_m)
             except Exception as e:
+                if _raw_conn:
+                    _raw_conn.close()
                 status_box.empty(); prog.empty()
-                st.error(f"❌ 컬럼 분석 실패: {e}"); st.stop()
+                st.error(f"❌ 컬럼 분석 실패: {e}"); return
 
             # ── Step 3: 검증 수행 ────────────────────────────────
             src_result, tgt_result = {}, {}
@@ -1586,18 +2121,18 @@ with tab_validator:
                 # COUNT
                 if do_count:
                     status_box.info("COUNT 비교 중...")
-                    src_entry['count'], _q_src_count = val_src_count(db_config_val, compiled_sql)
+                    src_entry['count'], _q_src_count = val_src_count(db_config_val, compiled_sql, conn=_conn_arg)
                     tgt_entry['count'], _q_tgt_count = val_tgt_count(
-                        db_config_val, val_tgt_sc, tbl, date_filter
+                        db_config_val, val_tgt_sc, tbl, date_filter, conn=_conn_arg
                     )
                     queries['count'] = {'src': _q_src_count, 'tgt': _q_tgt_count}
 
                 # SUM
                 if do_sum:
                     status_box.info("SUM 비교 중...")
-                    src_entry['sums'], _q_src_sum = val_src_sum(db_config_val, compiled_sql, num_cols)
+                    src_entry['sums'], _q_src_sum = val_src_sum(db_config_val, compiled_sql, num_cols, conn=_conn_arg)
                     tgt_entry['sums'], _q_tgt_sum = val_tgt_sum(
-                        db_config_val, val_tgt_sc, tbl, num_cols, date_filter
+                        db_config_val, val_tgt_sc, tbl, num_cols, date_filter, conn=_conn_arg
                     )
                     if _q_src_sum:
                         queries['sum'] = {'src': _q_src_sum, 'tgt': _q_tgt_sum}
@@ -1610,7 +2145,7 @@ with tab_validator:
                     status_box.info("샘플 데이터 조회 중...")
                     _exclude_cols = set(st.session_state.get('val_exclude_cols', ['dbt_dtm']))
 
-                    src_df, _q_src_sample = val_src_sample(db_config_val, compiled_sql, sample_limit)
+                    src_df, _q_src_sample = val_src_sample(db_config_val, compiled_sql, sample_limit, conn=_conn_arg)
                     src_df = src_df.drop(columns=[c for c in _exclude_cols if c in src_df.columns])
                     src_entry['sample'] = src_df
 
@@ -1618,7 +2153,7 @@ with tab_validator:
 
                     # IN 절 일괄 조회 (개별 쿼리 대비 N배 빠름)
                     _tgt_sample, _q_tgt_batch = val_tgt_sample_batch(
-                        db_config_val, val_tgt_sc, tbl, src_df, pk_cols, _match_cols
+                        db_config_val, val_tgt_sc, tbl, src_df, pk_cols, _match_cols, conn=_conn_arg
                     )
                     tgt_entry['sample'] = _tgt_sample.drop(columns=[c for c in _exclude_cols if c in _tgt_sample.columns])
                     tgt_entry['sample_key_type'] = 'PK' if pk_cols else 'ALL_COLS'
@@ -1634,6 +2169,9 @@ with tab_validator:
             except Exception as e:
                 src_entry['error'] = str(e)
                 tgt_entry['error'] = str(e)
+            finally:
+                if _raw_conn:
+                    _raw_conn.close()
 
             prog.progress(1.0)
             status_box.empty()
@@ -1642,22 +2180,25 @@ with tab_validator:
             tgt_result[tbl] = tgt_entry
 
             st.session_state['val_results'] = {
-                'model':     val_sel_m,
-                'tgt_sc':    val_tgt_sc,
-                'sdt':       str(val_sdt),
-                'edt':       str(val_edt),
-                'src':       src_result,
-                'tgt':       tgt_result,
-                'num_cols':  num_cols,
-                'pk_cols':   pk_cols,
-                'all_cols':  all_cols,
-                'do_count':  do_count,
-                'do_sum':    do_sum,
-                'do_sample': do_sample,
-                'queries':   queries,
-                'run_at':    datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'model':          val_sel_m,
+                'tgt_sc':         val_tgt_sc,
+                'sdt':            str(val_sdt),
+                'edt':            str(val_edt),
+                'src':            src_result,
+                'tgt':            tgt_result,
+                'num_cols':       num_cols,
+                'pk_cols':        pk_cols,
+                'all_cols':       all_cols,
+                'do_count':       do_count,
+                'do_sum':         do_sum,
+                'do_sample':      do_sample,
+                'queries':        queries,
+                'before_sql_ran': _bsql_to_run,
+                'run_at':         datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             }
-            st.rerun()
+            st.session_state.pop(f'_ins_val_msg_{_vv}', None)  # 새 검증 시 이전 저장 메시지 초기화
+            status_box.empty()
+            prog.empty()
 
     # ── compiled SQL 미리보기 (최근 compile 결과) ────────────
     if st.session_state.get('val_compiled_sql'):
@@ -1666,8 +2207,24 @@ with tab_validator:
             expanded=False
         ):
             if st.session_state.get('val_before_sql'):
-                st.caption("🗑️ before_sql (DELETE / TRUNCATE)")
-                st.code(st.session_state['val_before_sql'], language="sql")
+                # 각 before_sql 구문의 체크 여부(val_bsql_check_i)가
+                # 검증 실행 시 단일 커넥션(conn) 공유 여부를 결정한다.
+                # 체크된 구문이 하나라도 있으면 temp table이 살아있는 동일 커넥션을 재사용.
+                _bsql_stmts = [s.strip() for s in st.session_state['val_before_sql'].split(';') if s.strip()]
+                for _bi, _bstmt in enumerate(_bsql_stmts):
+                    _is_del_trunc = bool(re.match(r'\s*(?:delete|truncate)\b', _bstmt, re.IGNORECASE))
+                    _cap = "🗑️ before_sql (DELETE / TRUNCATE)" if _is_del_trunc else "📄 before_sql (기타 SQL)"
+                    _bch1, _bch2 = st.columns([5, 1])
+                    with _bch1:
+                        st.caption(_cap)
+                    with _bch2:
+                        st.checkbox(
+                            "검증 전 실행",
+                            key=f"val_bsql_check_{_bi}_{_vv}",
+                            value=not _is_del_trunc,  # DELETE/TRUNCATE는 기본 미선택
+                            help="검증 실행 전 이 구문을 먼저 실행합니다."
+                        )
+                    st.code(_bstmt, language="sql")
                 st.caption("📄 compiled SQL")
             st.code(st.session_state['val_compiled_sql'], language="sql")
 
@@ -1693,11 +2250,16 @@ with tab_validator:
             q = queries.get(key)
             if not q:
                 return
+            _before_ran = vr.get('before_sql_ran') or []
+            _src_display = (
+                ";\n\n".join(_before_ran) + ";\n\n" + q['src']
+                if _before_ran else q['src']
+            )
             with st.expander(label, expanded=False):
                 qc1, qc2 = st.columns(2)
                 with qc1:
                     st.caption("소스 쿼리 (compiled SQL 기반)")
-                    st.code(q['src'], language="sql", height=300)
+                    st.code(_src_display, language="sql", height=300)
                 with qc2:
                     st.caption("타겟 쿼리")
                     st.code(q['tgt'], language="sql", height=300)
@@ -1705,7 +2267,7 @@ with tab_validator:
         # ── 요약 메트릭 ──────────────────────────────────────
         if not err and (vr['do_count'] or vr['do_sum']):
             st.markdown("#### 📊 요약")
-            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1, mc2, mc3, mc4, mc_btn = st.columns(5)
             if vr['do_count']:
                 mc1.metric("소스 COUNT (compile)", f"{r['src_count']:,}" if r['src_count'] is not None else '-')
                 mc2.metric(
@@ -1715,15 +2277,83 @@ with tab_validator:
                     delta_color="off" if r['count_match'] else "inverse"
                 )
                 mc3.metric("COUNT 일치", "✅" if r['count_match'] else "❌")
-                _show_query_expander('count')
             if vr['do_sum']:
                 mc4.metric("SUM 전체 일치", "✅" if r['sum_all_match'] else "❌")
+            with mc_btn:
+                if st.button(
+                    "💾 검증결과 저장",
+                    key=f"btn_insert_val_{_vv}",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    try:
+                        _ins_uuid = insert_verification_to_db(
+                            db_config_val, vr, r,
+                            st.session_state.get('val_compiled_sql'),
+                        )
+                        st.session_state[f'_ins_val_msg_{_vv}'] = ('ok', _ins_uuid)
+                    except Exception as _ins_e:
+                        st.session_state[f'_ins_val_msg_{_vv}'] = ('err', str(_ins_e))
+            _ins_msg = st.session_state.get(f'_ins_val_msg_{_vv}')
+            if _ins_msg:
+                if _ins_msg[0] == 'ok':
+                    st.success(f"✅ 저장 완료  UUID: `{_ins_msg[1]}`")
+                else:
+                    st.error(f"❌ 저장 실패: {_ins_msg[1]}")
+            if vr['do_count']:
+                _show_query_expander('count')
 
         # ── 오류 표시 ────────────────────────────────────────
         if err:
             st.error(f"❌ 검증 오류: {err}")
 
         else:
+            # ── 전체 상태 배지 ────────────────────────────────
+            _count_ok  = r.get('count_match')    if vr.get('do_count')  else None
+            _sum_ok    = r.get('sum_all_match')  if vr.get('do_sum')    else None
+            _sample_ok = None
+            if vr.get('do_sample'):
+                _s2 = vr['src'][tbl].get('sample')
+                _t2 = vr['tgt'][tbl].get('sample')
+                if _s2 is not None and _t2 is not None and not _s2.empty and not _t2.empty:
+                    _cc2 = [c for c in _s2.columns if c in _t2.columns]
+                    _hd2 = False
+                    for _ri in range(min(len(_s2), len(_t2))):
+                        for _rc in _cc2:
+                            _sv2, _tv2 = _s2.iloc[_ri][_rc], _t2.iloc[_ri][_rc]
+                            if not (pd.isna(_sv2) and pd.isna(_tv2)):
+                                try:
+                                    _d2 = float(_sv2) != float(_tv2)
+                                except (TypeError, ValueError):
+                                    _d2 = str(_sv2) != str(_tv2)
+                                if _d2:
+                                    _hd2 = True
+                                    break
+                        if _hd2:
+                            break
+                    _sample_ok = not _hd2
+                elif _s2 is not None and _t2 is not None:
+                    _sample_ok = True
+
+            _all_chk   = [v for v in [_count_ok, _sum_ok, _sample_ok] if v is not None]
+            _overall_ok = all(_all_chk) if _all_chk else True
+
+            def _mk_badge(label, ok, fail_color):
+                if ok is None:
+                    return ''
+                bg = '#27ae60' if ok else fail_color
+                return (f'<span style="background:{bg};color:white;padding:3px 10px;'
+                        f'border-radius:4px;font-size:13px;font-weight:500;">'
+                        f'{label} {"PASS" if ok else "FAIL"}</span>')
+
+            _badge_html = ' &nbsp; '.join(filter(None, [
+                _mk_badge('전체',   _overall_ok, '#c0392b'),
+                _mk_badge('COUNT',  _count_ok,   '#e67e22'),
+                _mk_badge('SUM',    _sum_ok,     '#2980b9'),
+                _mk_badge('SAMPLE', _sample_ok,  '#8e44ad'),
+            ]))
+            st.markdown(_badge_html, unsafe_allow_html=True)
+
             # ── SUM 상세 ────────────────────────────────────
             if vr['do_sum'] and r['sum_details']:
                 st.markdown("#### 🔢 숫자 컬럼 SUM 비교")
@@ -1763,41 +2393,15 @@ with tab_validator:
                 )
                 _show_query_expander('sample')
 
-                sp1, sp2 = st.columns(2)
-                with sp1:
-                    st.caption("소스 (compiled SQL 결과)")
-                    if src_df is not None and not src_df.empty:
-                        st.dataframe(src_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("데이터 없음")
-                with sp2:
-                    st.caption(f"타겟 (`{tgt_sc_label}.{tbl}` 매칭 결과)")
-                    if tgt_df is not None and not tgt_df.empty:
-                        st.dataframe(tgt_df, use_container_width=True, hide_index=True)
-                    else:
-                        st.info("매칭된 데이터 없음")
-
-                # 소스 행 중 타겟에서 매칭 안 된 행 표시
-                if src_df is not None and tgt_df is not None:
-                    _src_cnt = len(src_df)
-                    _tgt_cnt = len(tgt_df)
-                    if _src_cnt != _tgt_cnt:
-                        st.warning(
-                            f"⚠️ 소스 {_src_cnt}행 중 타겟에서 {_tgt_cnt}행만 매칭됨 "
-                            f"({_src_cnt - _tgt_cnt}행 미매칭)"
-                        )
-
-                # 행별 불일치 하이라이트
-                if (src_df is not None and tgt_df is not None
-                        and not src_df.empty and not tgt_df.empty):
-
+                # 불일치 셀 사전 계산 (DataFrame 하이라이트 + diff table 공용)
+                common_cols = []
+                diff_cells  = []
+                if src_df is not None and tgt_df is not None and not src_df.empty and not tgt_df.empty:
                     common_cols = [c for c in src_df.columns if c in tgt_df.columns]
-                    diff_cells  = []
                     for idx in range(min(len(src_df), len(tgt_df))):
                         for col in common_cols:
                             sv = src_df.iloc[idx][col]
                             tv = tgt_df.iloc[idx][col]
-                            # NaN 동등 처리
                             both_nan = (pd.isna(sv) and pd.isna(tv))
                             try:
                                 differ = (float(sv) != float(tv))
@@ -1811,12 +2415,41 @@ with tab_validator:
                                     '타겟 값': tv,
                                 })
 
-                    if diff_cells:
-                        st.warning(f"⚠️ {len(diff_cells)}개 셀 불일치 발견")
-                        diff_df = pd.DataFrame(diff_cells)
-                        st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                sp1, sp2 = st.columns(2)
+                with sp1:
+                    st.caption("소스 (compiled SQL 결과)")
+                    if src_df is not None and not src_df.empty:
+                        _src_styled = (_style_sample_df(src_df, tgt_df, common_cols, '#ffe0b2')
+                                       if common_cols else src_df)
+                        st.dataframe(_src_styled, use_container_width=True, hide_index=True)
                     else:
-                        st.success("✅ 샘플 범위 내 모든 값 일치")
+                        st.info("데이터 없음")
+                with sp2:
+                    st.caption(f"타겟 (`{tgt_sc_label}.{tbl}` 매칭 결과)")
+                    if tgt_df is not None and not tgt_df.empty:
+                        _tgt_styled = (_style_sample_df(tgt_df, src_df, common_cols, '#ffe0b2')
+                                       if common_cols else tgt_df)
+                        st.dataframe(_tgt_styled, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("매칭된 데이터 없음")
+
+                # 소스 행 중 타겟에서 매칭 안 된 행 표시
+                if src_df is not None and tgt_df is not None:
+                    _src_cnt = len(src_df)
+                    _tgt_cnt = len(tgt_df)
+                    if _src_cnt != _tgt_cnt:
+                        st.warning(
+                            f"⚠️ 소스 {_src_cnt}행 중 타겟에서 {_tgt_cnt}행만 매칭됨 "
+                            f"({_src_cnt - _tgt_cnt}행 미매칭)"
+                        )
+
+                # 불일치 테이블 (이미 계산된 diff_cells 재사용)
+                if diff_cells:
+                    st.warning(f"⚠️ {len(diff_cells)}개 셀 불일치 발견")
+                    diff_df = pd.DataFrame(diff_cells)
+                    st.dataframe(diff_df, use_container_width=True, hide_index=True)
+                elif src_df is not None and tgt_df is not None and not src_df.empty and not tgt_df.empty:
+                    st.success("✅ 샘플 범위 내 모든 값 일치")
 
                 # 샘플 합본 CSV 다운로드
                 if src_df is not None and tgt_df is not None:
@@ -1829,3 +2462,356 @@ with tab_validator:
                         file_name=f"val_sample_{tbl}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                         mime="text/csv",
                     )
+
+
+
+# ============================================================
+# 이력 탭 UI
+# ============================================================
+def render_history_ui(db_config, veri_exists, dbtlog_exists):
+    """검증 이력 + dbt 실행 로그 sub-tab UI"""
+    st.subheader("📋 이력 조회")
+
+    if not veri_exists and not dbtlog_exists:
+        st.warning("admin 스키마 테이블이 존재하지 않습니다. DDL을 먼저 실행해주세요.")
+        st.code(
+            "python refs/edu/tools/execute_ddl.py airflow/dbconf.json "
+            "refs/edu/ddls/admin_00_verification_summary.sql\n"
+            "python refs/edu/tools/execute_ddl.py airflow/dbconf.json "
+            "refs/edu/ddls/admin_verification_count.sql\n"
+            "python refs/edu/tools/execute_ddl.py airflow/dbconf.json "
+            "refs/edu/ddls/admin_verification_sum.sql\n"
+            "python refs/edu/tools/execute_ddl.py airflow/dbconf.json "
+            "refs/edu/ddls/admin_verification_sample.sql",
+            language="bash"
+        )
+        return
+
+    # ── 공통 필터 ────────────────────────────────────────────
+    hf1, hf2, hf3, hf4 = st.columns([2, 1, 1, 1])
+    with hf1:
+        _h_model = st.text_input("모델명 (빈칸=전체)", key="hist_model")
+    with hf2:
+        _h_sdt = st.date_input("시작일", value=datetime.now().date() - timedelta(days=30), key="hist_sdt")
+    with hf3:
+        _h_edt = st.date_input("종료일", value=datetime.now().date(), key="hist_edt")
+    with hf4:
+        st.write("")
+        _h_search = st.button("🔍 조회", key="hist_search", use_container_width=True)
+
+    _h_model_val = _h_model.strip() or None
+    _h_sdt_val   = datetime.combine(_h_sdt, datetime.min.time())
+    _h_edt_val   = datetime.combine(_h_edt, datetime.min.time()) + timedelta(days=1)
+
+    sub_veri, sub_log = st.tabs(["🔍 검증 이력", "📊 실행 로그"])
+
+    # ── 검증 이력 sub-tab ────────────────────────────────────
+    with sub_veri:
+        if not veri_exists:
+            st.warning("admin.verification_summary 테이블이 없습니다.")
+        else:
+            _veri_refresh = False
+            _vthr1, _vthr2 = st.columns([5, 1])
+            with _vthr2:
+                _veri_refresh = st.button("🔄", key="hist_veri_refresh",
+                                          use_container_width=True, help="검증 이력 새로고침")
+
+            if _h_search or _veri_refresh or st.session_state.get('_hist_veri_df') is None:
+                try:
+                    _veri_df = fetch_verification_history(
+                        db_config, _h_model_val, _h_sdt_val, _h_edt_val
+                    )
+                    st.session_state['_hist_veri_df'] = _veri_df
+                except Exception as _e:
+                    st.error(f"조회 실패: {_e}")
+                    st.session_state['_hist_veri_df'] = pd.DataFrame()
+
+            _veri_df = st.session_state.get('_hist_veri_df', pd.DataFrame())
+
+            if _veri_df.empty:
+                with _vthr1:
+                    st.info("조회 결과가 없습니다.")
+            else:
+                def _status_icon(v):
+                    if v == 'PASS': return '✅'
+                    if v == 'FAIL': return '❌'
+                    return '-'
+
+                _disp = _veri_df.copy()
+                _disp['COUNT']  = _disp['count_status'].map(_status_icon)
+                _disp['SUM']    = _disp['sum_status'].map(_status_icon)
+                _disp['SAMPLE'] = _disp['sample_status'].map(_status_icon)
+                _disp['verification_date'] = pd.to_datetime(_disp['verification_date']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                _disp['기간'] = (
+                    _disp['query_condition_start'].astype(str).str[:10] + ' ~ ' +
+                    _disp['query_condition_end'].astype(str).str[:10]
+                )
+                _show_cols = ['verification_date', 'model_name', '기간', 'COUNT', 'SUM', 'SAMPLE', 'uuid']
+
+                with _vthr1:
+                    st.caption("행을 클릭하면 상세 조회가 표시됩니다.")
+                _veri_sel = st.dataframe(
+                    _disp[_show_cols], use_container_width=True, hide_index=True,
+                    on_select="rerun", selection_mode="single-row",
+                    key="hist_veri_table"
+                )
+
+                # 선택 행 → 상세 조회
+                _sel_rows = _veri_sel.selection.rows if _veri_sel.selection else []
+                if _sel_rows:
+                    _sel_idx  = _sel_rows[0]
+                    _sel_uuid = _veri_df.iloc[_sel_idx]['uuid']
+                    _sel_info = _disp.iloc[_sel_idx]
+                    _detail   = fetch_verification_detail(db_config, _sel_uuid)
+
+                    st.markdown(
+                        f"#### 📄 상세 조회 — `{_sel_info['model_name']}` "
+                        f"<span style='font-size:13px;color:gray;'>{_sel_info['verification_date']} / {_sel_info['기간']}</span>",
+                        unsafe_allow_html=True
+                    )
+
+                    # ── Summary 배지 ─────────────────────────────
+                    def _det_ok(status): return True if status == 'PASS' else (False if status == 'FAIL' else None)
+                    _d_count_ok  = _det_ok(_sel_info.get('COUNT', '').replace('✅','PASS').replace('❌','FAIL'))
+                    _d_sum_ok    = _det_ok(_sel_info.get('SUM', '').replace('✅','PASS').replace('❌','FAIL'))
+                    _d_sample_ok = _det_ok(_sel_info.get('SAMPLE', '').replace('✅','PASS').replace('❌','FAIL'))
+                    _d_all_chk   = [v for v in [_d_count_ok, _d_sum_ok, _d_sample_ok] if v is not None]
+                    _d_overall   = all(_d_all_chk) if _d_all_chk else True
+
+                    def _det_badge(label, ok, fail_color):
+                        if ok is None: return ''
+                        bg = '#27ae60' if ok else fail_color
+                        return (f'<span style="background:{bg};color:white;padding:3px 10px;'
+                                f'border-radius:4px;font-size:13px;font-weight:500;">'
+                                f'{label} {"PASS" if ok else "FAIL"}</span>')
+
+                    _d_badge_html = ' &nbsp; '.join(filter(None, [
+                        _det_badge('전체',   _d_overall,   '#c0392b'),
+                        _det_badge('COUNT',  _d_count_ok,  '#e67e22'),
+                        _det_badge('SUM',    _d_sum_ok,    '#2980b9'),
+                        _det_badge('SAMPLE', _d_sample_ok, '#8e44ad'),
+                    ]))
+                    st.markdown(_d_badge_html, unsafe_allow_html=True)
+
+                    # ── COUNT metric 요약 ─────────────────────────
+                    if _detail.get('count'):
+                        _dc = _detail['count']
+                        _dm1, _dm2 = st.columns(2)
+                        _dm1.metric("소스 COUNT", f"{_dc.get('source_count_result', 0):,}" if _dc.get('source_count_result') is not None else '-')
+                        _dm2.metric("타겟 COUNT", f"{_dc.get('target_count_result', 0):,}" if _dc.get('target_count_result') is not None else '-')
+
+                    st.divider()
+
+                    # ── 상세 expander (모두 collapsed) ────────────
+                    if _detail.get('count'):
+                        with st.expander("COUNT 상세", expanded=False):
+                            d = _detail['count']
+                            dc1, dc2 = st.columns(2)
+                            dc1.metric("소스 COUNT", f"{d.get('source_count_result', 0):,}" if d.get('source_count_result') is not None else '-')
+                            dc2.metric("타겟 COUNT", f"{d.get('target_count_result', 0):,}" if d.get('target_count_result') is not None else '-')
+                            if d.get('source_count_sql'):
+                                with st.expander("쿼리 보기"):
+                                    qc1, qc2 = st.columns(2)
+                                    qc1.code(d['source_count_sql'], language="sql")
+                                    qc2.code(d.get('target_count_sql', ''), language="sql")
+                    if _detail.get('sum'):
+                        with st.expander("SUM 상세", expanded=False):
+                            d = _detail['sum']
+                            sc1, sc2 = st.columns(2)
+                            with sc1:
+                                st.caption("소스 SUM")
+                                _src_sums = d.get('source_sum_result') or {}
+                                if isinstance(_src_sums, str):
+                                    _src_sums = json.loads(_src_sums)
+                                st.dataframe(pd.DataFrame(list(_src_sums.items()), columns=['컬럼', '소스 SUM']), hide_index=True)
+                            with sc2:
+                                st.caption("타겟 SUM")
+                                _tgt_sums = d.get('target_sum_result') or {}
+                                if isinstance(_tgt_sums, str):
+                                    _tgt_sums = json.loads(_tgt_sums)
+                                st.dataframe(pd.DataFrame(list(_tgt_sums.items()), columns=['컬럼', '타겟 SUM']), hide_index=True)
+                            if d.get('source_sum_sql'):
+                                with st.expander("쿼리 보기"):
+                                    qs1, qs2 = st.columns(2)
+                                    qs1.code(d['source_sum_sql'], language="sql")
+                                    qs2.code(d.get('target_sum_sql', ''), language="sql")
+                    if _detail.get('sample'):
+                        with st.expander("SAMPLE 상세", expanded=False):
+                            d = _detail['sample']
+                            _src_json = d.get('source_sample_result') or '[]'
+                            _tgt_json = d.get('target_sample_result') or '[]'
+                            if isinstance(_src_json, str):
+                                _src_json = json.loads(_src_json)
+                            if isinstance(_tgt_json, str):
+                                _tgt_json = json.loads(_tgt_json)
+                            sp1, sp2 = st.columns(2)
+                            with sp1:
+                                st.caption("소스")
+                                st.dataframe(pd.DataFrame(_src_json), use_container_width=True, hide_index=True)
+                            with sp2:
+                                st.caption("타겟")
+                                st.dataframe(pd.DataFrame(_tgt_json), use_container_width=True, hide_index=True)
+                            if d.get('source_sample_sql'):
+                                with st.expander("쿼리 보기"):
+                                    ssp1, ssp2 = st.columns(2)
+                                    ssp1.code(d['source_sample_sql'], language="sql")
+                                    ssp2.code(d.get('target_sample_sql', ''), language="sql")
+
+    # ── 실행 로그 sub-tab ────────────────────────────────────
+    with sub_log:
+        if not dbtlog_exists:
+            st.warning("admin.dbt_log 테이블이 없습니다.")
+        else:
+            _log_refresh = False
+            _lthr1, _lthr2 = st.columns([5, 1])
+            with _lthr2:
+                _log_refresh = st.button("🔄", key="hist_log_refresh",
+                                         use_container_width=True, help="실행 로그 새로고침")
+
+            if _h_search or _log_refresh or st.session_state.get('_hist_log_df') is None:
+                try:
+                    _log_df = fetch_dbt_log(db_config, _h_model_val, _h_sdt_val, _h_edt_val)
+                    st.session_state['_hist_log_df'] = _log_df
+                except Exception as _e:
+                    st.error(f"조회 실패: {_e}")
+                    st.session_state['_hist_log_df'] = pd.DataFrame()
+
+            _log_df = st.session_state.get('_hist_log_df', pd.DataFrame())
+
+            if _log_df.empty:
+                with _lthr1:
+                    st.info("조회 결과가 없습니다.")
+            else:
+                _ldisp = _log_df.drop(columns=['variables'], errors='ignore').copy()
+                _ldisp['start_time'] = pd.to_datetime(_ldisp['start_time']).dt.strftime('%Y-%m-%d %H:%M:%S')
+                _ldisp['status'] = _ldisp['status'].map(
+                    lambda v: '✅ success' if v == 'success' else (f'❌ {v}' if v else '-')
+                )
+
+                with _lthr1:
+                    st.caption("행을 클릭하면 실행 변수 확인 및 검증 탭으로 전송할 수 있습니다.")
+                _log_sel = st.dataframe(
+                    _ldisp, use_container_width=True, hide_index=True,
+                    on_select="rerun", selection_mode="single-row",
+                    key="hist_log_table"
+                )
+
+                _log_sel_rows = _log_sel.selection.rows if _log_sel.selection else []
+                if _log_sel_rows:
+                    _log_sel_idx = _log_sel_rows[0]
+                    _log_row     = _log_df.iloc[_log_sel_idx]
+                    _vars        = _log_row.get('variables')
+                    _vars_raw    = (_vars if isinstance(_vars, (dict, list))
+                                    else json.loads(_vars)) if _vars else {}
+                    if isinstance(_vars_raw, dict):
+                        _vars_dict = _vars_raw
+                    elif isinstance(_vars_raw, list):
+                        # [{"key": "...", "value": "..."}] 형태 변환
+                        _vars_dict = {
+                            item['key']: item['value']
+                            for item in _vars_raw
+                            if isinstance(item, dict) and 'key' in item and 'value' in item
+                        }
+                    else:
+                        _vars_dict = {}
+
+                    _ld1, _ld2 = st.columns([4, 1])
+                    with _ld1:
+                        st.markdown(
+                            f"#### 📄 `{_log_row['model_name']}` "
+                            f"<span style='font-size:13px;color:gray;'>{_ldisp.iloc[_log_sel_idx]['start_time']}</span>",
+                            unsafe_allow_html=True
+                        )
+                    with _ld2:
+                        st.write("")
+                        if st.button("🔍 검증 탭으로", key="hist_log_to_val",
+                                     use_container_width=True, type="primary"):
+                            _v_sdt = _vars_dict.get('data_interval_start', '')
+                            _v_edt = _vars_dict.get('data_interval_end', '')
+                            try:
+                                _v_sdt_d = datetime.strptime(_v_sdt[:19], '%Y-%m-%d %H:%M:%S').date()
+                                _v_edt_d = datetime.strptime(_v_edt[:19], '%Y-%m-%d %H:%M:%S').date()
+                            except Exception:
+                                _v_sdt_d = datetime.now().date() - timedelta(days=4)
+                                _v_edt_d = datetime.now().date() - timedelta(days=1)
+                            _log_model = _log_row['model_name']
+                            st.session_state['runner_to_val'] = {
+                                'model': _log_model,
+                                'group': st.session_state.get('model_to_group', {}).get(_log_model),
+                                'sdt':   _v_sdt_d,
+                                'edt':   _v_edt_d,
+                            }
+                            st.session_state['_open_val_dialog'] = True
+                            st.rerun()
+
+                    with st.expander("variables (dbt vars)", expanded=True):
+                        if _vars_raw:
+                            st.json(_vars_raw)
+                        else:
+                            st.info("변수 없음")
+
+
+# ============================================================
+# 다이얼로그 래퍼 — render_validation_ui 정의 이후에 위치해야 함
+# ============================================================
+@st.dialog("🔍 데이터 검증", width="large")
+def open_validation_dialog():
+    """검증 다이얼로그 래퍼 — render_validation_ui를 팝업으로 호출"""
+    # 탭과 위젯 키 충돌 방지: 다이얼로그는 _vv + 1000 사용
+    _orig_vv = st.session_state['_val_key_ver']
+    st.session_state['_val_key_ver'] = _orig_vv + 1000
+    try:
+        render_validation_ui()
+    finally:
+        st.session_state['_val_key_ver'] = _orig_vv
+
+def _apply_runner_to_val():
+    """runner_to_val 이력을 위젯 key에 반영 — 위젯 생성 전에 호출해야 함.
+    runner_to_val 자체는 삭제하지 않음 (버튼 가시성 유지 목적).
+    _r2v_applied 플래그로 중복 적용 방지.
+    """
+    _r2v = st.session_state.get('runner_to_val')
+    if _r2v and not st.session_state.get('_r2v_applied'):
+        _vv  = st.session_state['_val_key_ver']
+        _dvv = _vv + 1000  # 다이얼로그 키 버전
+        for _v in [_vv, _dvv]:
+            st.session_state[f'val_sb_group_{_v}'] = _r2v.get('group', '')
+            st.session_state[f'val_sb_model_{_v}'] = _r2v['model']
+            st.session_state[f'val_sdt_{_v}']      = _r2v['sdt']
+            st.session_state[f'val_edt_{_v}']      = _r2v['edt']
+        st.session_state['val_date_filter']    = None  # 이전 탭의 where 조건 초기화
+        st.session_state['val_results']        = None  # 이전 검증 결과 초기화
+        st.session_state['val_compiled_sql']   = None
+        st.session_state['val_compiled_model'] = None
+        st.session_state['val_before_sql']     = None
+        st.session_state['_r2v_applied'] = True  # 재적용 방지 (runner_to_val은 유지)
+
+_show_val_dialog = st.session_state.pop('_open_val_dialog', False)
+
+# 팝업 닫힘 감지: 열려 있던 팝업이 닫힌 직후 탭 초기화
+if not _show_val_dialog and st.session_state.pop('_val_dialog_was_open', False):
+    st.session_state['val_results']        = None
+    st.session_state['val_compiled_sql']   = None
+    st.session_state['val_compiled_model'] = None
+
+if _show_val_dialog:
+    st.session_state['_val_dialog_was_open'] = True   # 팝업 열림 기록
+    # pop 전에 먼저 위젯 세팅 — st.rerun()으로 인해 위젯 state가 초기화된 경우 복원
+    st.session_state.pop('_r2v_applied', None)   # 재적용 허용을 위해 플래그만 먼저 제거
+    _apply_runner_to_val()                        # runner_to_val이 살아있는 상태에서 적용
+    st.session_state.pop('runner_to_val', None)  # 적용 후 정리
+    open_validation_dialog()
+
+# ============================================================
+# TAB 3 : 데이터 검증
+# ============================================================
+with tab_validator:
+    # 다이얼로그가 열려있어도 항상 렌더링 (키 충돌 없음 — 다이얼로그는 _vv+1000 사용)
+    _apply_runner_to_val()
+    render_validation_ui()
+
+# ============================================================
+# TAB 4 : 이력
+# ============================================================
+with tab_history:
+    render_history_ui(_hist_db_config, _veri_exists, _dbtlog_exists)

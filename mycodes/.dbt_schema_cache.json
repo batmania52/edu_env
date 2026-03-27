@@ -1,6 +1,0 @@
-{
-  "project_dir": "/Users/macbook/projects/edu_project/dbt_projects/edu001",
-  "profile_dir": "/Users/macbook/projects/edu_project/dbt_projects/edu001/.dbt",
-  "target": "dev",
-  "schema": "stg"
-}
