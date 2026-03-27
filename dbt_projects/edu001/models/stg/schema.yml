@@ -1,148 +1,170 @@
 version: 2
 models:
 - name: stg_order_items
-  description: Model for stg_order_items
+  description: 주문 항목 데이터의 스테이징 모델
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: order_item_id
   columns:
   - name: order_item_id
-    data_type: integer
     description: 주문 항목의 기본 키
+    data_type: integer
   - name: order_id
-    data_type: integer
     description: 주문에 대한 외래 키
-  - name: product_id
     data_type: integer
+  - name: product_id
     description: 상품 ID
+    data_type: integer
   - name: quantity
-    data_type: integer
     description: 상품 수량
+    data_type: integer
   - name: price
-    data_type: numeric(10,2)
     description: 상품 가격
-- name: stg_products
-  description: Model for stg_products
-  config:
-    materialized: incremental
-    incremental_strategy: append
-  columns:
-  - name: product_id
-    data_type: integer
-    description: 상품의 기본 키
-  - name: product_name
-    data_type: character varying(255)
-    description: 상품 이름
-  - name: product_category
-    data_type: character varying(255)
-    description: 상품 카테고리
-  - name: price
     data_type: numeric(10,2)
-    description: 상품 가격
-  - name: created_date
-    data_type: date
-    description: 상품 생성일
-- name: stg_purchase_orders
-  description: Model for stg_purchase_orders
-  config:
-    materialized: incremental
-    incremental_strategy: append
-    unique_key:
-    - purchase_order_id
-  columns:
-  - name: purchase_order_id
-    data_type: integer
-    description: 발주 고유 ID
-  - name: customer_id
-    data_type: integer
-    description: 발주 고객 ID
-  - name: order_date
+  - name: dbt_dtm
+    description: dbt 적재 일시
     data_type: timestamp without time zone
-    description: 발주 날짜 및 시간
-  - name: total_amount
-    data_type: numeric(10,2)
-    description: 발주 총 금액
-  - name: status
-    data_type: character varying(50)
-    description: '발주 상태 (예: pending, completed, canceled)'
 - name: stg_receipts
-  description: Model for stg_receipts
+  description: 영수증 데이터의 스테이징 모델
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: receipt_id
   columns:
   - name: receipt_id
-    data_type: integer
     description: 영수증 항목 고유 ID
-  - name: order_id
     data_type: integer
+  - name: order_id
     description: 주문 ID
+    data_type: integer
   - name: customer_id
-    data_type: integer
     description: 고객 ID
+    data_type: integer
   - name: customer_name
-    data_type: character varying(255)
     description: 고객 이름
+    data_type: character varying(255)
   - name: customer_email
-    data_type: character varying(255)
     description: 고객 이메일
+    data_type: character varying(255)
   - name: order_date
-    data_type: timestamp without time zone
     description: 주문 일시
+    data_type: timestamp without time zone
   - name: total_order_amount
-    data_type: numeric(10,2)
     description: 총 주문 금액
+    data_type: numeric(10,2)
   - name: product_id
-    data_type: integer
     description: 상품 ID
-  - name: product_name
-    data_type: character varying(255)
-    description: 상품 이름
-  - name: product_category
-    data_type: character varying(255)
-    description: 상품 카테고리
-  - name: item_quantity
     data_type: integer
+  - name: product_name
+    description: 상품 이름
+    data_type: character varying(255)
+  - name: product_category
+    description: 상품 카테고리
+    data_type: character varying(255)
+  - name: item_quantity
     description: 상품 수량
+    data_type: integer
   - name: item_price
-    data_type: numeric(10,2)
     description: 개별 상품 가격
-  - name: item_total
     data_type: numeric(10,2)
+  - name: item_total
     description: 개별 상품 총액
-- name: stg_orders
-  description: Model for stg_orders
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: stg_purchase_orders
+  description: 발주 데이터
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: purchase_order_id
+  columns:
+  - name: purchase_order_id
+    description: 발주 고유 ID
+    data_type: integer
+  - name: customer_id
+    description: 발주 고객 ID
+    data_type: integer
+  - name: order_date
+    description: 발주 날짜 및 시간
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 발주 총 금액
+    data_type: numeric(10,2)
+  - name: status
+    description: '발주 상태 (예: pending, completed, canceled)'
+    data_type: character varying(50)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: stg_orders
+  description: 주문 데이터의 스테이징 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: order_id
   columns:
   - name: order_id
-    data_type: integer
     description: 주문의 기본 키
-  - name: customer_id
     data_type: integer
+  - name: customer_id
     description: 고객에 대한 외래 키
+    data_type: integer
   - name: order_date
-    data_type: timestamp without time zone
     description: 주문 날짜
+    data_type: timestamp without time zone
   - name: total_amount
-    data_type: numeric(10,2)
     description: 주문 총액
-- name: stg_customers
-  description: Model for stg_customers
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: stg_products
+  description: 상품 데이터의 스테이징 모델
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: product_id
+  columns:
+  - name: product_id
+    description: 상품의 기본 키
+    data_type: integer
+  - name: product_name
+    description: 상품 이름
+    data_type: character varying(255)
+  - name: product_category
+    description: 상품 카테고리
+    data_type: character varying(255)
+  - name: price
+    description: 상품 가격
+    data_type: numeric(10,2)
+  - name: created_date
+    description: 상품 생성일
+    data_type: date
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: stg_customers
+  description: 고객 데이터의 스테이징 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: customer_id
   columns:
   - name: customer_id
-    data_type: integer
     description: 고객의 기본 키
+    data_type: integer
   - name: customer_name
-    data_type: character varying(255)
     description: 고객 이름
-  - name: customer_email
     data_type: character varying(255)
+  - name: customer_email
     description: 고객 이메일
+    data_type: character varying(255)
   - name: registration_date
-    data_type: date
     description: 고객 등록일
+    data_type: date
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone

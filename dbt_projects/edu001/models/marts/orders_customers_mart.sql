@@ -7,12 +7,13 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-27: 증분 조건을 between으로 변경 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
 
 {%- set before_sql -%}
-delete from {{ this }} where order_date >= '{{ start }}'::timestamp and order_date < '{{ end }}'::timestamp
+delete from {{ this }} where order_date between '{{ start }}'::timestamp and '{{ end }}'::timestamp
 {%- endset -%}
 
 {%- do run_query(before_sql) if execute -%}
@@ -24,8 +25,8 @@ select o.order_id
      , o.order_date
      , o.total_amount
      , c.registration_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_orders') }} as o
   join {{ ref('stg_customers') }} as c
     on o.customer_id = c.customer_id
- where o.order_date >= '{{ start }}'::timestamp
-   and o.order_date < '{{ end }}'::timestamp
+ where o.order_date between '{{ start }}'::timestamp and '{{ end }}'::timestamp

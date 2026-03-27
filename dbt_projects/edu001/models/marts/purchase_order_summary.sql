@@ -7,12 +7,13 @@
   
   [Update History]
   - 2026-03-23: 최초 생성 (Gemini Agent)
+  - 2026-03-27: 증분 조건을 between으로 변경 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
 
 {%- set before_sql -%}
-delete from {{ this }} where customer_id in (select distinct customer_id from {{ ref('stg_purchase_orders') }} where order_date >= '{{ start }}'::timestamp and order_date < '{{ end }}'::timestamp)
+delete from {{ this }} where customer_id in (select distinct customer_id from {{ ref('stg_purchase_orders') }} where order_date between '{{ start }}'::timestamp and '{{ end }}'::timestamp)
 {%- endset -%}
 
 {%- do run_query(before_sql) if execute -%}
@@ -27,8 +28,7 @@ select po.customer_id
      , min(po.order_date) as first_purchase_order_date
      , max(po.order_date) as last_purchase_order_date
   from {{ ref('stg_purchase_orders') }} as po
- where po.order_date >= '{{ start }}'::timestamp
-   and po.order_date < '{{ end }}'::timestamp
+ where po.order_date between '{{ start }}'::timestamp and '{{ end }}'::timestamp
  group by po.customer_id
 )
 
@@ -41,6 +41,7 @@ select cust.customer_id
      , pos.canceled_orders
      , pos.first_purchase_order_date
      , pos.last_purchase_order_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_customers') }} as cust
   join purchase_orders_summary as pos
     on cust.customer_id = pos.customer_id

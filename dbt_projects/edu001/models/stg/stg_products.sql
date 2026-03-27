@@ -7,12 +7,13 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-27: 증분 조건을 between으로 변경 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
 
 {%- set before_sql -%}
-delete from {{ this }} where created_date >= '{{ start }}'::date and created_date < '{{ end }}'::date
+delete from {{ this }} where created_date between '{{ start }}'::date and '{{ end }}'::date
 {%- endset -%}
 
 {%- do run_query(before_sql) if execute -%}
@@ -22,6 +23,6 @@ select product_id
      , product_category
      , price
      , created_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ source('edu', 'raw_products') }}
- where created_date >= '{{ start }}'::date
-   and created_date < '{{ end }}'::date
+ where created_date between '{{ start }}'::date and '{{ end }}'::date

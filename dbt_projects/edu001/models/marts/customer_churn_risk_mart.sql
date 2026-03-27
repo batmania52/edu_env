@@ -7,12 +7,13 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-27: 증분 조건을 between으로 변경 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
 
 {%- set before_sql -%}
-delete from {{ this }} where analysis_date >= '{{ start }}'::date and analysis_date < '{{ end }}'::date
+delete from {{ this }} where analysis_date between '{{ start }}'::date and '{{ end }}'::date
 {%- endset -%}
 
 {%- do run_query(before_sql) if execute -%}
@@ -23,8 +24,7 @@ with customer_orders as (
          , count(order_id) as total_orders
          , avg(total_amount) as avg_order_value
       from {{ ref('stg_orders') }}
-     where order_date >= '{{ start }}'::timestamp -- filter orders based on date range
-       and order_date < '{{ end }}'::timestamp
+     where order_date between '{{ start }}'::timestamp and '{{ end }}'::timestamp -- filter orders based on date range
      group by customer_id
 )
 select c.customer_id
@@ -46,8 +46,8 @@ select c.customer_id
          else 'Low'
        end::varchar(255) as churn_risk_segment
      , date '{{ end }}'::date as analysis_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_customers') }} as c
   left join customer_orders as co
     on c.customer_id = co.customer_id
- where c.registration_date >= '{{ start }}'::date -- filter customers based on registration date (proxy for analysis_date)
-   and c.registration_date < '{{ end }}'::date
+ where c.registration_date between '{{ start }}'::date and '{{ end }}'::date -- filter customers based on registration date (proxy for analysis_date)

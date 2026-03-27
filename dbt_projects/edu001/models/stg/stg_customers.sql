@@ -7,12 +7,13 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-27: 증분 조건을 between으로 변경 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
 
 {%- set before_sql -%}
-delete from {{ this }} where registration_date >= '{{ start }}'::date and registration_date < '{{ end }}'::date
+delete from {{ this }} where registration_date between '{{ start }}'::date and '{{ end }}'::date
 {%- endset -%}
 
 {%- do run_query(before_sql) if execute -%}
@@ -21,6 +22,6 @@ select customer_id
      , customer_name
      , customer_email
      , registration_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ source('edu', 'raw_customers') }}
- where registration_date >= '{{ start }}'::date
-   and registration_date < '{{ end }}'::date
+ where registration_date between '{{ start }}'::date and '{{ end }}'::date

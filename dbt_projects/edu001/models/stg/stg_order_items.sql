@@ -22,4 +22,5 @@ select id as order_item_id
      , product_id
      , quantity
      , price
+     , current_timestamp::timestamp as dbt_dtm
   from {{ source('edu', 'order_items') }}
