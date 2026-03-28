@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "lastUpdated": "2026-03-27T21:34:42.674Z",
+  "platform": "gemini",
+  "data": {
+    "session": {
+      "sessionCount": 2,
+      "lastSessionStarted": "2026-03-27T21:34:42.674Z",
+      "lastSessionEnded": "2026-03-27T21:31:14.272Z"
+    },
+    "pdca": {
+      "lastFeature": null,
+      "activePdca": null,
+      "preferredLevel": "Starter"
+    },
+    "preferences": {
+      "language": "en",
+      "automationLevel": "semi-auto"
+    },
+    "custom": {}
+  },
+  "sessionCount": 4,
+  "lastSession": {
+    "startedAt": "2026-03-27T22:43:06.132Z",
+    "platform": "claude",
+    "level": "Starter"
+  }
+}
