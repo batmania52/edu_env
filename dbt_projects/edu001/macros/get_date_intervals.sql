@@ -29,8 +29,8 @@
 
   {# 2. 날짜 가공 로직 (문자열 비교 시 공백 제거) #}
   {% if run_mode|trim == 'schedule' %}
-    {% do log("DEBUG: Applying schedule logic (-4d, -1d)", info=True) %}
-    {% set start_dt = (start_dt - modules.datetime.timedelta(days=4)) %}
+    {% do log("DEBUG: Applying schedule logic (-3d, -1d)", info=True) %}
+    {% set start_dt = (start_dt - modules.datetime.timedelta(days=3)) %}
     {% set end_dt = (end_dt - modules.datetime.timedelta(days=1)) %}
   {% else %}
     {% do log("DEBUG: Applying manual logic (no change)", info=True) %}
