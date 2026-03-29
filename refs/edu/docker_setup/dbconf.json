@@ -1,0 +1,9 @@
+{
+  "postgres_default": {
+    "host": "localhost",
+    "port": 5433,
+    "user": "airflow",
+    "password": "airflow",
+    "database": "airflow"
+  }
+}

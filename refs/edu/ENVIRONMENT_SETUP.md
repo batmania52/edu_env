@@ -1,6 +1,7 @@
 # dbt-Airflow 통합 교육 환경 설정 가이드 (v4)
 
 이 문서는 Docker 기반의 dbt와 Airflow 통합 실습 환경을 0단계부터 구축하기 위한 상세 가이드입니다. 이 가이드는 데이터 정합성이 확보된 최신 데이터 세트와 자동화 스크립트를 활용합니다.
+별다른 지시가 없으면 모든 스크립트의 실행은 프로젝트 루트에서 실행됩니다.
 
 ## 1. 인프라 구축 (Docker)
 
@@ -8,45 +9,31 @@
 기존 상태를 완전히 삭제하고 깨끗한 환경에서 시작합니다. 이 과정은 현재 프로젝트의 Docker 서비스에만 영향을 미치며, 다른 실행 중인 Docker 컨테이너는 건드리지 않습니다.
 ```bash
 # 기존 Airflow, dbt 프로젝트 및 가상 환경 디렉토리 삭제
-rm -rf airflow
-rm -rf dbt_projects
+sudo rm -rf airflow/config airflow/dags airflow/logs airflow/plugins
+rm -rf dbt_projects/edu001
 rm -rf venv_dbt
 
-# 필요한 디렉토리 생성
-mkdir -p refs/edu
-
 # Airflow 작업 디렉토리 생성 및 Docker 설정 파일 복사
-mkdir -p airflow
+```bash
 cp refs/edu/docker_setup/docker-compose.yaml airflow/
 cp refs/edu/docker_setup/Dockerfile airflow/
+cp refs/edu/docker_setup/entrypoint.sh airflow/
+. airflow_init.sh
+```
+```bash
 
 
 # Docker 서비스 재시작: 기존 서비스 중지 및 컨테이너/볼륨 삭제 후 빌드 및 백그라운드 실행
+# 프로젝트 루트에서 실행
 cd airflow && docker-compose down -v && docker-compose up -d --build
 ```
-*   **주의**: `airflow-init` 서비스가 완료될 때까지 약 1분 정도 대기하십시오.
 *   **포트 확인**: 호스트에서 DB 접속(5433), Airflow 접속(8081)이 가능한지 확인합니다.
 
 ## 2. 환경 설정 (Configuration)
 
-### 2.1 연결 정보 설정
-`refs/edu`에 있는 템플릿을 복사하여 실제 설정 파일을 생성합니다.
-```bash
-# 1. Python 도구용 설정
-cp refs/edu/dbconf.json.template airflow/dbconf.json
-```
-
-### 2.2 Airflow 자산 배치
+### 2.1 Airflow 자산 배치
 Airflow DAGs 및 플러그인 파일을 Airflow 작업 디렉토리로 복사합니다.
-```bash
-# Airflow DAGs 복사
-mkdir -p airflow/dags
-cp refs/edu/airflow_assets/dags/*.py airflow/dags/
 
-# Airflow 플러그인 복사
-mkdir -p airflow/plugins
-cp refs/edu/airflow_assets/plugins/*.py airflow/plugins/
-```
 
 ### 2.3 Python 가상 환경 설정
 
@@ -63,6 +50,12 @@ source venv_dbt/bin/activate && pip install -r refs/edu/requirements.txt
 ## 3. 데이터 및 인프라 자동 구축
 
 다음 순서대로 Python 스크립트를 실행하여 데이터베이스 환경을 완성합니다. (가상 환경의 Python 권장)
+
+### 3.0 아래의 프로그램 통합 실행
+```bash
+. set_environments.sh
+```
+
 
 ### 3.1 스키마 초기화
 실습용 스키마(`edu`, `stg`, `marts`)를 생성합니다.
@@ -95,13 +88,12 @@ rm -rf dbt_projects/edu001
 # dbt 프로젝트 초기화
 cd dbt_projects&& source ../venv_dbt/bin/activate && dbt init edu001 --skip-profile-setup
 
-# 기본 example 모델 삭제 (프로젝트 필요에 따라 제거)
+# 기본 example 모델 삭제
 rm -rf dbt_projects/edu001/models/example
 
 # dbt 프로필 설정 파일 복사 (기본 profiles.yml을 덮어씀)
 mkdir -p dbt_projects/edu001/.dbt
 cp refs/edu/profiles.yml.template dbt_projects/edu001/.dbt/profiles.yml
-
 ```
 ### 4.2 메타데이터 및 매크로 설정
 현재 DB 구조와 dbt 모델을 동기화하고 운영 매크로를 배치합니다.
@@ -133,7 +125,8 @@ cp refs/edu/macros/*.sql dbt_projects/edu001/macros/
 ### 5.1 dbt 전체 실행
 ```bash
 cd dbt_projects/edu001
-dbt run --profiles-dir .dbt -t dev
+dbt run --profiles-dir .dbt -t dev \
+  --vars '{"run_mode": "manual", "data_interval_start": "2026-01-01 00:00:00", "data_interval_end": "2026-01-02 00:00:00"}'
 ```
 *   **검증**: `stg`, `marts` 테이블들의 데이터 건수가 0이 아닌 유의미한 수치를 기록하는지 확인하십시오.
 

@@ -3,19 +3,19 @@ import json
 import os
 
 def initialize_db():
-    # airflow/dbconf.json 로드
-    dbconf_path = os.path.join(os.getcwd(), 'airflow', 'dbconf.json')
-    
+    # dbconf.json 로드 (스크립트와 같은 디렉토리)
+    dbconf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dbconf.json')
+
     if not os.path.exists(dbconf_path):
         print(f"Error: dbconf.json not found at {dbconf_path}")
         return
 
     with open(dbconf_path, 'r') as f:
         config = json.load(f)
-    
+
     # 호스트(Local) 접속 정보 사용
     conn_params = config.get('postgres_default')
-    
+
     if not conn_params:
         print("Error: 'postgres_default' config not found in dbconf.json")
         return
@@ -48,7 +48,7 @@ def initialize_db():
         """)
 
         print("Infrastructure initialized successfully using dbconf.json.")
-        
+
         cur.close()
         conn.close()
 

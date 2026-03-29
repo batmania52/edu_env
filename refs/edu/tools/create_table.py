@@ -2,7 +2,7 @@ import json
 import psycopg2
 import os
 
-def create_table_from_sql(db_config_path, sql_file_path, db_key='postgres_local'):
+def create_table_from_sql(db_config_path, sql_file_path, db_key='postgres_default'):
     """
     SQL 파일에 정의된 DDL을 사용하여 PostgreSQL 테이블을 생성합니다.
     """
@@ -65,8 +65,8 @@ def create_table_from_sql(db_config_path, sql_file_path, db_key='postgres_local'
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__)) # 절대 경로 사용
-    
-    db_config_path = os.path.normpath(os.path.join(current_dir, "../../../airflow/dbconf.json"))
+
+    db_config_path = os.path.join(current_dir, 'dbconf.json')
     sql_file_path = os.path.normpath(os.path.join(current_dir, "../ddls/edu_purchase_orders.sql"))
 
     print(f"Resolved DB config path: {db_config_path}")

@@ -73,7 +73,7 @@ def load_data_from_csv(file_path, table_name, db_conf, schema_name='edu'):
         with open(file_path, 'r', encoding='utf-8') as csvfile:
             csv_reader = csv.reader(csvfile)
             header = next(csv_reader)  # Read header row
-            
+
             # Construct INSERT statement
             columns = ', '.join([f'"{col}"' for col in header]) # Quote column names to handle special chars
 
@@ -81,7 +81,7 @@ def load_data_from_csv(file_path, table_name, db_conf, schema_name='edu'):
 
             # Prepare data for insertion
             data_to_insert = [tuple(row) for row in csv_reader]
-            
+
             if not data_to_insert:
                 print(f"No data found in {file_path} to load into {schema_name}.{table_name}")
                 return
@@ -89,7 +89,7 @@ def load_data_from_csv(file_path, table_name, db_conf, schema_name='edu'):
             # Execute batch insert
             psycopg2.extras.execute_values(cur, insert_query, data_to_insert)
             conn.commit()
-        
+
         print(f"Successfully loaded data from {file_path} into {schema_name}.{table_name}")
 
     except Exception as e:
@@ -103,10 +103,10 @@ def load_data_from_csv(file_path, table_name, db_conf, schema_name='edu'):
             conn.close()
 
 if __name__ == '__main__':
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-    dbconf_path = os.path.join(project_root, 'airflow', 'dbconf.json')
-    input_data_dir = os.path.join(project_root, 'refs', 'edu', 'datas')
-    
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    dbconf_path = os.path.join(_script_dir, 'dbconf.json')
+    input_data_dir = os.path.normpath(os.path.join(_script_dir, '..', 'datas'))
+
     try:
         with open(dbconf_path, 'r') as f:
             db_config = json.load(f)['postgres_default']

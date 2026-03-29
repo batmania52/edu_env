@@ -69,8 +69,7 @@ def schema_exists(db_conf, schema_name):
             conn.close()
 
 if __name__ == '__main__':
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-    dbconf_path = os.path.join(project_root, 'airflow', 'dbconf.json')
+    dbconf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dbconf.json')
 
     try:
         with open(dbconf_path, 'r') as f:

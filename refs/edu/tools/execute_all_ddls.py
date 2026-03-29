@@ -41,9 +41,9 @@ def execute_sql_query(sql_query, db_conf, success_message="SQL query executed su
             conn.close()
 
 if __name__ == '__main__':
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-    dbconf_path = os.path.join(project_root, 'airflow', 'dbconf.json')
-    ddl_dir = os.path.join(project_root, 'refs', 'edu', 'ddls')
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    dbconf_path = os.path.join(_script_dir, 'dbconf.json')
+    ddl_dir = os.path.normpath(os.path.join(_script_dir, '..', 'ddls'))
 
     try:
         with open(dbconf_path, 'r') as f:

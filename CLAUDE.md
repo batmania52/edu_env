@@ -9,7 +9,7 @@
 
 - **출력 언어**: 모든 수행 과정과 결과는 **한국어**로 출력한다.
 - **파일 우선 원칙**: 파일을 수정하거나 참조할 경우, 기억에 의존하지 말고 **반드시 파일을 먼저 읽고** 확인한다.
-- **DB 접속**: DB 접속이 필요한 경우 `airflow/dbconf.json` 파일의 정보를 사용한다.
+- **DB 접속**: DB 접속이 필요한 경우 `refs/edu/tools/dbconf.json` 파일의 정보를 사용한다.
 - **반복 오류 처리**: 동일한 에러가 **5회 이상 반복**되면 시도를 중단하고 에러 내용을 사용자에게 보고한다.
 
 ---
@@ -22,7 +22,7 @@
 1. **소스 조사**: 소스 테이블 구조 확인. 날짜 기준 컬럼이 여러 개면 사용자에게 확인 요청.
 2. **DDL 실행**: `execute_ddl.py`로 대상 테이블을 DB에 먼저 생성.
    ```bash
-   python refs/edu/tools/execute_ddl.py airflow/dbconf.json refs/edu/ddls/<DDL파일명>.sql
+   python refs/edu/tools/execute_ddl.py refs/edu/tools/dbconf.json refs/edu/ddls/<DDL파일명>.sql
    ```
 3. **schema.yml 업데이트**: `update_schema_yml.py`로 DB에서 메타데이터를 가져와 자동 반영.
    ```bash
@@ -30,7 +30,7 @@
      --schema <스키마명> \
      --tables <테이블명> \
      --schema_file_path dbt_projects/edu001/models/<스키마>/schema.yml \
-     --dbconf_path airflow/dbconf.json
+     --dbconf_path refs/edu/tools/dbconf.json
    ```
 
 ### 1.2. 모델 헤더 규칙
@@ -249,7 +249,7 @@ edu_project/                              ← 프로젝트 루트
 ├── .sqlfluff                             ← SQLFluff 전역 설정 (Sticky Right, indent=5 등)
 │
 ├── airflow/                              ← Airflow Docker 환경
-│   ├── dbconf.json                       ← DB 접속 정보 (작업 시 이 파일 참조)
+│   ├── dbconf.json                       ← DB 접속 정보 (참조용 — 작업 시 refs/edu/tools/dbconf.json 사용)
 │   ├── Dockerfile                        ← Airflow 이미지 정의
 │   ├── docker-compose.yaml               ← Airflow 컨테이너 구성
 │   ├── entrypoint.sh                     ← 컨테이너 시작 스크립트
@@ -326,6 +326,7 @@ edu_project/                              ← 프로젝트 루트
         ├── macros/                       ← 완성 매크로 참조본
         ├── airflow_assets/               ← Airflow DAG/플러그인 참조본
         └── tools/                        ← Python 자동화 스크립트
+            ├── dbconf.json               ← DB 접속 정보 (tools 전용)
             ├── execute_ddl.py            ← DDL 단일 실행
             ├── execute_all_ddls.py       ← DDL 전체 일괄 실행
             ├── update_schema_yml.py      ← schema.yml 자동 업데이트
@@ -335,9 +336,9 @@ edu_project/                              ← 프로젝트 루트
             ├── create_table.py           ← 테이블 생성
             ├── manage_schemas_for_test.py ← 테스트용 스키마 관리
             ├── initialize_log_infrastructure.py ← 로그 인프라 초기화
-            ├── generate_dummy_purchase_orders.py ← 발주 더미 데이터 생성
             ├── remove_model_from_schema_yml.py  ← schema.yml에서 모델 제거
-            └── remove_source_from_sources_yml.py ← sources.yml에서 소스 제거
+            ├── remove_source_from_sources_yml.py ← sources.yml에서 소스 제거
+            └── bak/                      ← 교체된 구버전 원본 파일 보관
 ```
 
 ---
