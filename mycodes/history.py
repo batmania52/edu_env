@@ -289,7 +289,25 @@ def render_history_ui(db_config, veri_exists, dbtlog_exists):
                 with _lthr1:
                     st.info("조회 결과가 없습니다.")
             else:
+                def _parse_vars(v):
+                    if not v:
+                        return {}
+                    try:
+                        raw = v if isinstance(v, (dict, list)) else json.loads(v)
+                        if isinstance(raw, dict):
+                            return raw
+                        elif isinstance(raw, list):
+                            return {i['key']: i['value'] for i in raw
+                                    if isinstance(i, dict) and 'key' in i}
+                    except Exception:
+                        return {}
+                    return {}
+
                 _ldisp = _log_df.drop(columns=['variables'], errors='ignore').copy()
+                _vars_parsed = _log_df['variables'].apply(_parse_vars)
+                _ldisp['run_mode']   = _vars_parsed.apply(lambda d: d.get('run_mode', '-'))
+                _ldisp['시작일시']     = _vars_parsed.apply(lambda d: d.get('data_interval_start', '-'))
+                _ldisp['종료일시']     = _vars_parsed.apply(lambda d: d.get('data_interval_end', '-'))
                 _ldisp['start_time'] = pd.to_datetime(_ldisp['start_time']).dt.strftime('%Y-%m-%d %H:%M:%S')
                 _ldisp['status'] = _ldisp['status'].map(
                     lambda v: '✅ success' if v == 'success' else (f'❌ {v}' if v else '-')
@@ -351,8 +369,3 @@ def render_history_ui(db_config, veri_exists, dbtlog_exists):
                             st.session_state['_open_val_dialog'] = True
                             st.rerun()
 
-                    with st.expander("variables (dbt vars)", expanded=True):
-                        if _vars_raw:
-                            st.json(_vars_raw)
-                        else:
-                            st.info("변수 없음")
