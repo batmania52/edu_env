@@ -7,3 +7,4 @@ airflow/postgres_data/*
 **/bak/
 **/logs/
 mycodes/.dbt_unified_cache.json
+.bkit/
