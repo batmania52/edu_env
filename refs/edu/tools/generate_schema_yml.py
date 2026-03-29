@@ -5,8 +5,6 @@ import yaml
 
 def get_db_config():
     dbconf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dbconf.json')
-    if not os.path.exists(dbconf_path):
-        dbconf_path = '/home/batmania/projects/edu_env/refs/edu/dbconf.json'
     with open(dbconf_path, 'r') as f:
         configs = json.load(f)
         return configs.get('postgres_local') or configs.get('postgres_default')
