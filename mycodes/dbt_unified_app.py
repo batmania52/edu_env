@@ -280,7 +280,8 @@ div[data-testid="stButton"]:has(button:disabled) button:disabled {
 # --- 사이드바 ---
 with st.sidebar:
     st.header("⚙️ dbt 공통 설정")
-    project_dir = st.text_input("Project Directory", value=cache.get("project_dir", os.getcwd()))
+    _default_project = os.path.join(os.path.expanduser("~"), "projects", "edu_project", "dbt_projects", "edu001")
+    project_dir = st.text_input("Project Directory", value=cache.get("project_dir", _default_project))
     profile_dir = st.text_input("Profiles Directory", value=cache.get("profile_dir", os.path.expanduser("~/.dbt")))
     if st.button("설정 저장"):
         save_cache({"project_dir": project_dir, "profile_dir": profile_dir,
