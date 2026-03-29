@@ -244,6 +244,17 @@ def on_counter_change():
     on_ui_change()
     st.session_state['ms_exclude'] = []
 
+def on_run_mode_change():
+    """run mode 변경 시 호출 — SQL 초기화 + 모드에 따라 날짜 기본값 조정."""
+    on_ui_change()
+    _today = datetime.now().date()
+    if st.session_state.get('rb_run_mode') == 'schedule':
+        st.session_state['start_dt_widget'] = _today - timedelta(days=1)
+        st.session_state['end_dt_widget']   = _today
+    else:
+        st.session_state['start_dt_widget'] = _today - timedelta(days=4)
+        st.session_state['end_dt_widget']   = _today - timedelta(days=1)
+
 def focus_lineage_model(model_name):
     """리니지 버튼 클릭 시 해당 모델로 포커스 이동 (순수 시각화 전용)."""
     st.session_state['lineage_focus_model'] = model_name
@@ -346,7 +357,7 @@ with tab_runner:
                 sel_m = mv
     with cr2:
         run_m = st.radio("🏃 모드", ["manual", "schedule"],
-                         key="rb_run_mode", horizontal=True, on_change=on_ui_change)
+                         key="rb_run_mode", horizontal=True, on_change=on_run_mode_change)
     with cr3:
         st.write("")
         if st.button("🔄 초기화", key="btn_reset_runner", use_container_width=True):
