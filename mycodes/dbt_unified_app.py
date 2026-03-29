@@ -427,7 +427,7 @@ with tab_runner:
                     st.session_state['full_up_list']   = _l_up or {}
                     st.session_state['full_down_list'] = _l_dn or {}
                     st.rerun()
-            _ex_opts = []
+            _ex_opts = [f"🎯 {sel_m}"]  # 선택 모델 자신 항상 포함
             if cb_up:
                 for _d, _models in st.session_state.get('full_up_list', {}).items():
                     if _d <= int(cnt_up_val):
@@ -439,7 +439,7 @@ with tab_runner:
                     if _d <= int(cnt_dn_val):
                         for _m in (_models if isinstance(_models, (list, set)) else []):
                             _ex_opts.append(f"⬇️ {_m}")
-            _ex_opts = sorted(set(_ex_opts))
+            _ex_opts = [_ex_opts[0]] + sorted(set(_ex_opts[1:]))  # 자신은 항상 맨 앞
             if _ex_opts:
                 st.multiselect("🚫 Exclude 모델", options=_ex_opts,
                                key="ms_exclude", on_change=on_ui_change)
