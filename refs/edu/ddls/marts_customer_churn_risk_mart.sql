@@ -9,7 +9,8 @@ CREATE TABLE marts.customer_churn_risk_mart (
     avg_order_value numeric(10,2),
     churn_risk_score numeric(10,2),
     churn_risk_segment varchar(255),
-    analysis_date date
+    analysis_date date,
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE marts.customer_churn_risk_mart IS '고객 이탈 위험 분석 마트 모델';
@@ -24,3 +25,5 @@ COMMENT ON COLUMN marts.customer_churn_risk_mart.avg_order_value IS '고객 주�
 COMMENT ON COLUMN marts.customer_churn_risk_mart.churn_risk_score IS '계산된 이탈 위험 점수';
 COMMENT ON COLUMN marts.customer_churn_risk_mart.churn_risk_segment IS '이탈 위험 세그먼트 (낮음, 중간, 높음)';
 COMMENT ON COLUMN marts.customer_churn_risk_mart.analysis_date IS '이탈 위험 분석 수행 날짜';
+COMMENT ON COLUMN marts.customer_churn_risk_mart.dbt_dtm IS 'dbt 적재 일시';
+

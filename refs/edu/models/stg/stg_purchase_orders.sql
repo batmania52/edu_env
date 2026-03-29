@@ -7,6 +7,7 @@
   
   [Update History]
   - 2026-03-23: 최초 생성 (Gemini Agent)
+  - 2026-03-28: dbt_dtm 컬럼 추가 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
@@ -22,6 +23,7 @@ select purchase_order_id
      , order_date
      , total_amount
      , status
+     , current_timestamp::timestamp as dbt_dtm
   from {{ source('edu', 'purchase_orders') }}
  where order_date >= '{{ start }}'::timestamp
    and order_date < '{{ end }}'::timestamp

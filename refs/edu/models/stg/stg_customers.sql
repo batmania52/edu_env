@@ -7,6 +7,7 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-28: dbt_dtm 컬럼 추가 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
@@ -21,6 +22,7 @@ select customer_id
      , customer_name
      , customer_email
      , registration_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ source('edu', 'raw_customers') }}
  where registration_date >= '{{ start }}'::date
    and registration_date < '{{ end }}'::date

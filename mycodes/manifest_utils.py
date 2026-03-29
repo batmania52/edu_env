@@ -64,7 +64,7 @@ def get_compiled_sql(project_dir, model_name):
 
 # Design Ref: §3.2 FR-03 — manifest.json 1회 로드 (mtime 기반 캐시)
 @st.cache_data
-def _load_manifest_cached(manifest_path: str, _mtime: float) -> dict:
+def _load_manifest_cached(manifest_path: str, mtime: float) -> dict:
     """manifest.json을 캐시하여 1회만 파싱. mtime 변경 시 자동 재로드."""
     try:
         with open(manifest_path, 'r', encoding='utf-8') as f:

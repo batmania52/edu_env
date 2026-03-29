@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS stg.stg_receipts (
     product_category VARCHAR(255),
     item_quantity INTEGER,
     item_price NUMERIC(10, 2),
-    item_total NUMERIC(10, 2)
+    item_total NUMERIC(10, 2),
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE stg.stg_receipts IS '영수증 데이터의 스테이징 모델';

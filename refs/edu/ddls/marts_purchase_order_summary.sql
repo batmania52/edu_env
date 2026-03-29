@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS marts.purchase_order_summary (
     completed_orders BIGINT,
     canceled_orders BIGINT,
     first_purchase_order_date TIMESTAMP WITHOUT TIME ZONE,
-    last_purchase_order_date TIMESTAMP WITHOUT TIME ZONE
+    last_purchase_order_date TIMESTAMP WITHOUT TIME ZONE,
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE marts.purchase_order_summary IS '고객별 발주 요약 정보';

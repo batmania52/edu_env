@@ -6,6 +6,7 @@ import subprocess
 import pandas as pd
 import glob
 import re
+import shutil
 from datetime import datetime, timedelta
 
 from db_utils import (
@@ -23,7 +24,7 @@ from history import render_history_ui
 # ============================================================
 # 0. 설정 및 캐시
 # ============================================================
-CACHE_FILE = ".dbt_unified_cache.json"
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".dbt_unified_cache.json")
 
 def load_cache():
     """캐시 파일이 존재하면 JSON을 dict로 로드하고, 없거나 오류 시 빈 dict 반환."""
@@ -161,7 +162,13 @@ if 'init_unified' not in st.session_state:
         'compiled_sql': None,
         'before_sql': None,
         'up_list': {}, 'down_list': {},
-        'up_depth': 0, 'down_depth': 0,
+        'full_up_list': {}, 'full_down_list': {},
+        'lineage_focus_model': None,
+        'up_depth': 0, 'down_depth': 0,        # 리니지 시각화 전용
+        # Run 설정 (모델 선택 영역)
+        'cb_upstream': False, 'cnt_upstream': 1,
+        'cb_downstream': False, 'cnt_downstream': 1,
+        'ms_exclude': [],
         'cmd_reviewed': False,
         'sb_group': "📂 모델 그룹을 선택하세요",
         'gen_analysis_data': None,
@@ -199,24 +206,52 @@ if 'init_unified' not in st.session_state:
 # 기존 세션에서 신규 키가 누락된 경우 보완
 st.session_state.setdefault('_gen_key_ver', 0)
 st.session_state.setdefault('_val_key_ver', 0)
+st.session_state.setdefault('full_up_list', {})
+st.session_state.setdefault('full_down_list', {})
+st.session_state.setdefault('lineage_focus_model', None)
+st.session_state.setdefault('cb_upstream', False)
+st.session_state.setdefault('cnt_upstream', 1)
+st.session_state.setdefault('cb_downstream', False)
+st.session_state.setdefault('cnt_downstream', 1)
+st.session_state.setdefault('ms_exclude', [])
 
 def on_ui_change():
-    """모델/날짜/모드 위젯 변경 시 호출되어 컴파일 결과와 실행 상태를 초기화."""
+    """날짜/모드 위젯 변경 시 호출 — SQL/실행 상태만 초기화. 리니지는 건드리지 않음."""
     st.session_state.compiled_sql = None
     st.session_state.before_sql = None
     st.session_state.cmd_reviewed = False
-    st.session_state['last_run_df']    = None
-    st.session_state['runner_to_val']  = None   # Runner → Validator 탭 간 이관 데이터 (실행 후 검증 연계)
+    st.session_state['last_run_df']   = None
+    st.session_state['runner_to_val'] = None
 
-def select_new_model(model_name):
-    """Lineage 버튼 클릭 시 호출되어 해당 모델로 그룹/모델 selectbox를 전환하고 UI를 초기화."""
-    g = st.session_state.model_to_group.get(model_name)
-    if g:
-        st.session_state.sb_group = g
-        st.session_state.sb_model = model_name
-        st.session_state.up_depth = 0
-        st.session_state.down_depth = 0
-        on_ui_change()
+def reset_lineage():
+    """리니지 시각화 state 전체 초기화. exclude 선택은 유지."""
+    st.session_state['up_list']             = {}
+    st.session_state['down_list']           = {}
+    st.session_state['full_up_list']        = {}
+    st.session_state['full_down_list']      = {}
+    st.session_state['lineage_focus_model'] = None
+    st.session_state['up_depth']            = 0
+    st.session_state['down_depth']          = 0
+
+def on_model_change():
+    """모델 selectbox 변경 시 호출 — SQL/실행 상태 + 리니지 모두 초기화."""
+    on_ui_change()
+    reset_lineage()
+    st.session_state['ms_exclude'] = []  # 모델 변경 시 exclude는 무효화
+
+def on_counter_change():
+    """Upstream/Downstream counter 변경 시 호출 — SQL 초기화 + exclude 선택 리셋."""
+    on_ui_change()
+    st.session_state['ms_exclude'] = []
+
+def focus_lineage_model(model_name):
+    """리니지 버튼 클릭 시 해당 모델로 포커스 이동 (순수 시각화 전용)."""
+    st.session_state['lineage_focus_model'] = model_name
+    st.session_state['_lineage_auto_run']   = True
+    st.session_state['up_list']        = {}
+    st.session_state['down_list']      = {}
+    st.session_state['full_up_list']   = {}
+    st.session_state['full_down_list'] = {}
 
 # ============================================================
 # 6. 앱 레이아웃
@@ -300,12 +335,12 @@ with tab_runner:
     with cr1:
         gp_p = "📂 모델 그룹을 선택하세요"
         sel_g = st.selectbox("📁 그룹 선택", [gp_p] + list(hierarchy.keys()),
-                             key="sb_group", on_change=on_ui_change)
+                             key="sb_group", on_change=on_model_change)
         mp_p = "📂 모델을 선택하세요"
         sel_m = None
         if sel_g != gp_p:
             mv = st.selectbox("📂 모델 선택", [mp_p] + hierarchy[sel_g],
-                              key="sb_model", on_change=on_ui_change)
+                              key="sb_model", on_change=on_model_change)
             if mv != mp_p:
                 sel_m = mv
     with cr2:
@@ -315,20 +350,45 @@ with tab_runner:
         st.write("")
         if st.button("🔄 초기화", key="btn_reset_runner", use_container_width=True):
             # 위젯 key가 아닌 값들은 즉시 초기화
-            st.session_state['up_list']       = {}
-            st.session_state['down_list']     = {}
-            st.session_state['up_depth']      = 0
-            st.session_state['down_depth']    = 0
-            st.session_state['compiled_sql']  = None
-            st.session_state['before_sql']    = None
-            st.session_state['cmd_reviewed']  = False
-            st.session_state['runner_to_gen'] = None
-            st.session_state['runner_to_val'] = None
+            st.session_state['up_list']             = {}
+            st.session_state['down_list']           = {}
+            st.session_state['full_up_list']        = {}
+            st.session_state['full_down_list']      = {}
+            st.session_state['lineage_focus_model'] = None
+            st.session_state['up_depth']            = 0
+            st.session_state['down_depth']          = 0
+            st.session_state['cb_upstream']         = False
+            st.session_state['cnt_upstream']        = 1
+            st.session_state['cb_downstream']       = False
+            st.session_state['cnt_downstream']      = 1
+            st.session_state['ms_exclude']          = []
+            st.session_state['compiled_sql']        = None
+            st.session_state['before_sql']          = None
+            st.session_state['cmd_reviewed']        = False
+            st.session_state['runner_to_gen']       = None
+            st.session_state['runner_to_val']       = None
             # 위젯 key는 다음 rerun에서 위젯 생성 전에 처리
             st.session_state['_runner_reset_pending'] = True
             st.rerun()
 
     schema_ok, sc_err = check_model_schema_exists(project_dir, sel_m) if sel_m else (True, None)
+
+    # 리니지 포커스 모델 자동 분석 (focus_lineage_model 콜백 후)
+    if st.session_state.pop('_lineage_auto_run', False):
+        focus_m = st.session_state.get('lineage_focus_model') or sel_m
+        if focus_m:
+            up, dn, err = get_lineage_from_manifest(project_dir, focus_m, 10, 10)
+            if not err:
+                full_up = up or {}
+                full_dn = dn or {}
+                st.session_state['full_up_list']   = full_up
+                st.session_state['full_down_list'] = full_dn
+                st.session_state.up_depth   = max(full_up.keys()) if full_up else 0
+                st.session_state.down_depth = max(full_dn.keys()) if full_dn else 0
+                st.session_state['up_list']   = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
+                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
+                st.rerun()
+
 
     if sel_m:
         if not schema_ok:
@@ -341,43 +401,100 @@ with tab_runner:
             st.info("💡 YAML Generator 탭에서 해당 모델의 스키마를 바로 생성할 수 있습니다.")
         st.divider()
 
+        # ── Run 설정: Upstream / Downstream / Exclude ──────────────────────
+        rx1, rx2, rx3, rx4 = st.columns(4)
+        with rx1:
+            cb_up = st.checkbox("⬆️ Upstream", key="cb_upstream",
+                                on_change=on_ui_change, disabled=not schema_ok)
+        with rx2:
+            cnt_up_val = st.number_input("Upstream Depth", min_value=1, max_value=10, step=1,
+                                         key="cnt_upstream", label_visibility="collapsed",
+                                         disabled=not cb_up, on_change=on_counter_change)
+        with rx3:
+            cb_dn = st.checkbox("⬇️ Downstream", key="cb_downstream",
+                                on_change=on_ui_change, disabled=not schema_ok)
+        with rx4:
+            cnt_dn_val = st.number_input("Downstream Depth", min_value=1, max_value=10, step=1,
+                                         key="cnt_downstream", label_visibility="collapsed",
+                                         disabled=not cb_dn, on_change=on_counter_change)
+
+        if cb_up or cb_dn:
+            # 리니지 데이터 없으면 지금 즉시 로드 (manifest 캐시 사용)
+            if not (st.session_state.get('full_up_list') or st.session_state.get('full_down_list')):
+                _l_up, _l_dn, _l_err = get_lineage_from_manifest(project_dir, sel_m, 10, 10)
+                if not _l_err:
+                    st.session_state['full_up_list']   = _l_up or {}
+                    st.session_state['full_down_list'] = _l_dn or {}
+                    st.rerun()
+            _ex_opts = []
+            if cb_up:
+                for _d, _models in st.session_state.get('full_up_list', {}).items():
+                    if _d <= int(cnt_up_val):
+                        for _m in (_models if isinstance(_models, (list, set)) else []):
+                            if "(Source)" not in _m:
+                                _ex_opts.append(f"⬆️ {_m}")
+            if cb_dn:
+                for _d, _models in st.session_state.get('full_down_list', {}).items():
+                    if _d <= int(cnt_dn_val):
+                        for _m in (_models if isinstance(_models, (list, set)) else []):
+                            _ex_opts.append(f"⬇️ {_m}")
+            _ex_opts = sorted(set(_ex_opts))
+            if _ex_opts:
+                st.multiselect("🚫 Exclude 모델", options=_ex_opts,
+                               key="ms_exclude", on_change=on_ui_change)
+            else:
+                st.caption("💡 해당 depth 범위에 exclude 가능한 모델이 없습니다.")
+
+        st.divider()
+
         # Lineage 컨트롤
+        _has_full = bool(st.session_state.get('full_up_list') or st.session_state.get('full_down_list'))
         dc1, dc2, dc3, dc4 = st.columns([1, 1, 1, 1])
         with dc1:
             u1, u2 = st.columns(2)
-            if u1.button("➖", key="um", disabled=not schema_ok):
-                st.session_state.up_depth = max(0, st.session_state.up_depth - 1); on_ui_change()
-            if u2.button("➕", key="up", disabled=not schema_ok):
-                st.session_state.up_depth += 1; on_ui_change()
+            if u1.button("➖", key="um", disabled=not _has_full):
+                st.session_state.up_depth = max(0, st.session_state.up_depth - 1)
+                full_up = st.session_state.get('full_up_list', {})
+                st.session_state['up_list'] = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
+            if u2.button("➕", key="up", disabled=not _has_full):
+                st.session_state.up_depth += 1
+                full_up = st.session_state.get('full_up_list', {})
+                st.session_state['up_list'] = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
             st.write(f"**업스트림 Depth: {st.session_state.up_depth}**")
         with dc2:
             if st.button("🧬 Lineage 분석", use_container_width=True, disabled=not schema_ok):
                 with st.spinner("분석 중..."):
-                    up, dn, err = get_lineage_from_manifest(
-                        project_dir, sel_m,
-                        st.session_state.up_depth, st.session_state.down_depth
-                    )
+                    # 분석 시작: 포커스를 현재 선택 모델로 초기화
+                    st.session_state['lineage_focus_model'] = sel_m
+                    up, dn, err = get_lineage_from_manifest(project_dir, sel_m, 10, 10)
                     if err:
                         st.error(err)
                     else:
-                        st.session_state.up_list = up
-                        st.session_state.down_list = dn
+                        full_up = up or {}
+                        full_dn = dn or {}
+                        st.session_state['full_up_list']   = full_up
+                        st.session_state['full_down_list'] = full_dn
+                        # 탐색 depth를 최대 가용값으로 자동 설정
+                        st.session_state.up_depth   = max(full_up.keys()) if full_up else 0
+                        st.session_state.down_depth = max(full_dn.keys()) if full_dn else 0
+                        st.session_state['up_list']   = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
+                        st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
+                        st.rerun()  # dc1/dc3 depth 표시를 업데이트된 값으로 재렌더링
         with dc3:
             d1, d2 = st.columns(2)
-            if d1.button("➖", key="dm", disabled=not schema_ok):
-                st.session_state.down_depth = max(0, st.session_state.down_depth - 1); on_ui_change()
-            if d2.button("➕", key="dp", disabled=not schema_ok):
-                st.session_state.down_depth += 1; on_ui_change()
+            if d1.button("➖", key="dm", disabled=not _has_full):
+                st.session_state.down_depth = max(0, st.session_state.down_depth - 1)
+                full_dn = st.session_state.get('full_down_list', {})
+                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
+            if d2.button("➕", key="dp", disabled=not _has_full):
+                st.session_state.down_depth += 1
+                full_dn = st.session_state.get('full_down_list', {})
+                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
             st.write(f"**다운스트림 Depth: {st.session_state.down_depth}**")
         with dc4:
             st.write("")
-            if st.button("🔄 Lineage 초기화", use_container_width=True,
-                         disabled=not (st.session_state.up_list or st.session_state.down_list)):
-                st.session_state.up_list    = {}
-                st.session_state.down_list  = {}
-                st.session_state.up_depth   = 0
-                st.session_state.down_depth = 0
-                on_ui_change()
+            if st.button("🔄 Lineage 초기화", use_container_width=True, disabled=not _has_full):
+                reset_lineage()   # up/down_depth 초기화, exclude 유지
                 st.rerun()
 
         # Lineage 결과 표시
@@ -386,23 +503,18 @@ with tab_runner:
             down_d = st.session_state.down_list
             max_up_d   = max(up_d.keys(),   default=0)
             max_down_d = max(down_d.keys(), default=0)
-
             total_cols = max_up_d + 1 + max_down_d
-            all_cols   = st.columns(total_cols) if total_cols > 0 else []
+            font_size  = max(9, 14 - max(0, total_cols - 4))
 
-            # 공통 카드 스타일 - 버튼과 동일한 높이/폰트 기준
-            _card_common = (
-                "display:block;width:100%;box-sizing:border-box;"
-                "border:1px solid rgba(49,51,63,0.2);border-radius:6px;"
-                "padding:6px 12px;margin-bottom:4px;"
-                "font-size:14px;line-height:1.6;text-align:center;"
-                "font-family:inherit;"
-            )
-            _card_model  = _card_common + "cursor:default;background:transparent;"
-            _card_source = _card_common + "background:transparent;color:#888;"
-            _card_center = _card_common + (
-                "font-weight:bold;color:#ff4b4b;background:transparent;"
-            )
+            if font_size < 14:
+                st.markdown(f"""<style>
+div[data-testid="stHorizontalBlock"]:has(button[key="lineage_center_model"]) button p {{
+    font-size: {font_size}px !important;
+}}
+</style>""", unsafe_allow_html=True)
+
+            all_cols = st.columns(total_cols) if total_cols > 0 else []
+            lineage_center = st.session_state.get('lineage_focus_model') or sel_m
 
             # 업스트림
             for d in range(max_up_d, 0, -1):
@@ -415,14 +527,15 @@ with tab_runner:
                                       use_container_width=True, disabled=True)
                         else:
                             st.button(m, key=f"ub_{d}_{m}",
-                                      on_click=select_new_model, args=(m,),
+                                      on_click=focus_lineage_model, args=(m,),
                                       use_container_width=True)
 
-            # 선택 모델 (중앙)
+            # 포커스 모델 (중앙)
             with all_cols[max_up_d]:
-                st.caption("▶ 현재 모델")
+                is_focus_diff = lineage_center != sel_m
+                st.caption("▶ 포커스 모델" if is_focus_diff else "▶ 현재 모델")
                 st.button(
-                    sel_m, key="lineage_center_model",
+                    lineage_center, key="lineage_center_model",
                     use_container_width=True, disabled=True
                 )
 
@@ -433,7 +546,7 @@ with tab_runner:
                     st.caption(f"⬇️ Depth {d}")
                     for m in down_d.get(d, []):
                         st.button(m, key=f"db_{d}_{m}",
-                                  on_click=select_new_model, args=(m,),
+                                  on_click=focus_lineage_model, args=(m,),
                                   use_container_width=True)
 
     st.divider()
@@ -454,14 +567,26 @@ with tab_runner:
 
     # Compile / Run
     if sel_m and target_val:
-        slc = f"{st.session_state.up_depth}+{sel_m}+{st.session_state.down_depth}"  # dbt --select 인자: upstream_depth+model+downstream_depth 형식
+        _cb_up  = st.session_state.get('cb_upstream', False)
+        _cnt_up = int(st.session_state.get('cnt_upstream', 1))
+        _cb_dn  = st.session_state.get('cb_downstream', False)
+        _cnt_dn = int(st.session_state.get('cnt_downstream', 1))
+        up_part = f"{_cnt_up}+" if _cb_up else ""
+        dn_part = f"+{_cnt_dn}" if _cb_dn else ""
+        slc = f"{up_part}{sel_m}{dn_part}"
+
+        _ms_ex    = st.session_state.get('ms_exclude', []) or []
+        clean_ex  = [m.split(" ", 1)[1] for m in _ms_ex] if _ms_ex else []
         v_j = json.dumps({
             "data_interval_start": convert_to_dbt_ts(sdt),
             "data_interval_end": convert_to_dbt_ts(edt, True),
             "run_mode": run_m
         })
-        args = ["--select", slc, "--target", target_val, "--vars", v_j,
-                "--project-dir", project_dir, "--profiles-dir", profile_dir]
+        args = ["--select", slc]
+        if clean_ex:
+            args += ["--exclude"] + clean_ex
+        args += ["--target", target_val, "--vars", v_j,
+                 "--project-dir", project_dir, "--profiles-dir", profile_dir]
 
         c1, c2 = st.columns(2)
         with c1:
@@ -494,10 +619,17 @@ with tab_runner:
             if st.button("🔍 Command Review", use_container_width=True,
                          disabled=not schema_ok or date_invalid):
                 st.session_state.cmd_reviewed = True
-                display_vars = f"'{v_j}'"
-                review_cmd = ["dbt", "run", "--select", slc, "--target", target_val,
-                              "--vars", display_vars,
-                              "--project-dir", project_dir, "--profiles-dir", profile_dir]
+                # args에서 --vars 값만 따옴표 처리하여 표시
+                display_args = []
+                i = 0
+                while i < len(args):
+                    if args[i] == "--vars" and i + 1 < len(args):
+                        display_args += ["--vars", f"'{args[i+1]}'"]
+                        i += 2
+                    else:
+                        display_args.append(args[i])
+                        i += 1
+                review_cmd = ["dbt", "run"] + display_args
                 st.info(" ".join(review_cmd))
 
             if st.button("▶️ Run Execution", type="primary", use_container_width=True,

@@ -9,7 +9,8 @@ CREATE TABLE marts.orders_products_mart (
     item_price numeric(10,2),
     product_price numeric(10,2),
     quantity integer,
-    product_created_date date
+    product_created_date date,
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE marts.orders_products_mart IS '주문, 주문 항목 및 상품 데이터 마트 모델';
@@ -24,3 +25,5 @@ COMMENT ON COLUMN marts.orders_products_mart.item_price IS '주문 항목의 상
 COMMENT ON COLUMN marts.orders_products_mart.product_price IS '상품의 현재 가격';
 COMMENT ON COLUMN marts.orders_products_mart.quantity IS '주문 항목의 상품 수량';
 COMMENT ON COLUMN marts.orders_products_mart.product_created_date IS '상품 생성일';
+COMMENT ON COLUMN marts.orders_products_mart.dbt_dtm IS 'dbt 적재 일시';
+

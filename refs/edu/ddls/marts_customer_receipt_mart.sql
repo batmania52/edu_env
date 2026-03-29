@@ -7,7 +7,8 @@ CREATE TABLE IF NOT EXISTS marts.customer_receipt_mart (
     total_receipt_count BIGINT,
     total_items_purchased BIGINT,
     total_spend_amount NUMERIC(18, 2),
-    average_item_price NUMERIC(10, 2)
+    average_item_price NUMERIC(10, 2),
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE marts.customer_receipt_mart IS '고객별 영수증 요약 마트 테이블';

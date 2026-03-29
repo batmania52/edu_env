@@ -1,5 +1,6 @@
 version: 2
 models:
+
 - name: customer_churn_risk_mart
   description: Model for customer_churn_risk_mart
   config:
@@ -39,6 +40,9 @@ models:
   - name: analysis_date
     data_type: date
     description: 이탈 위험 분석 수행 날짜
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
 - name: customer_receipt_mart
   description: Model for customer_receipt_mart
   config:
@@ -74,6 +78,9 @@ models:
   - name: average_item_price
     data_type: numeric(10,2)
     description: 고객이 구매한 상품의 평균 가격
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
 - name: orders_customers_mart
   description: Model for orders_customers_mart
   config:
@@ -101,6 +108,9 @@ models:
   - name: registration_date
     data_type: date
     description: 고객 등록일
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
 - name: orders_mart
   description: Model for orders_mart
   config:
@@ -131,6 +141,9 @@ models:
   - name: item_total
     data_type: numeric(10,2)
     description: 항목별 총액
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
 - name: orders_products_mart
   description: Model for orders_products_mart
   config:
@@ -170,6 +183,9 @@ models:
   - name: product_created_date
     data_type: date
     description: 상품 생성일
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
 - name: purchase_order_summary
   description: Model for purchase_order_summary
   config:
@@ -203,3 +219,6 @@ models:
   - name: last_purchase_order_date
     data_type: timestamp without time zone
     description: 마지막 발주 날짜
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone

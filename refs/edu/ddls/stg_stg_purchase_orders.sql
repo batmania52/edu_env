@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS stg.stg_purchase_orders (
     customer_id INTEGER NOT NULL,
     order_date TIMESTAMP WITHOUT TIME ZONE,
     total_amount NUMERIC(10, 2),
-    status VARCHAR(50)
+    status VARCHAR(50),
+    dbt_dtm timestamp without time zone
 );
 
 COMMENT ON TABLE stg.stg_purchase_orders IS '발주 데이터';

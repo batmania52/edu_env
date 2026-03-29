@@ -12,5 +12,6 @@ create table marts.receipt_analysis_mart (
     , product_category varchar(100)
     , item_quantity int8
     , item_price numeric(18, 2)
-    , item_total numeric(18, 2)
+    , item_total numeric(18, 2),
+    dbt_dtm timestamp without time zone
 );

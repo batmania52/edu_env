@@ -7,6 +7,7 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-28: dbt_dtm 컬럼 추가 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
@@ -46,6 +47,7 @@ select c.customer_id
          else 'Low'
        end::varchar(255) as churn_risk_segment
      , date '{{ end }}'::date as analysis_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_customers') }} as c
   left join customer_orders as co
     on c.customer_id = co.customer_id

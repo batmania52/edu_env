@@ -7,6 +7,7 @@
   
   [Update History] - 모델의 변경 이력을 관리하는 섹션
   - 2026-03-20: 최초 생성 (Gemini CLI)
+  - 2026-03-28: dbt_dtm 컬럼 추가 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
@@ -24,6 +25,7 @@ select o.order_id
      , o.order_date
      , o.total_amount
      , c.registration_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_orders') }} as o
   join {{ ref('stg_customers') }} as c
     on o.customer_id = c.customer_id

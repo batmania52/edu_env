@@ -280,3 +280,48 @@ models:
   - name: dbt_dtm
     description: dbt 적재 일시
     data_type: timestamp without time zone
+- name: orders_summary_mart
+  description: 주문-고객-상품 통합 요약 마트 (mart 간 리니지 테스트용)
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
+  columns:
+  - name: order_id
+    description: 주문 ID (복합 PK)
+    data_type: integer
+  - name: customer_id
+    description: 고객 ID
+    data_type: integer
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: registration_date
+    description: 고객 등록일
+    data_type: date
+  - name: order_date
+    description: 주문 날짜
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: product_id
+    description: 상품 ID (복합 PK)
+    data_type: integer
+  - name: quantity
+    description: 상품 수량
+    data_type: integer
+  - name: price
+    description: 상품 단가
+    data_type: numeric(10,2)
+  - name: item_total
+    description: 상품별 총액
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone

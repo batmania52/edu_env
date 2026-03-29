@@ -7,6 +7,7 @@
   
   [Update History]
   - 2026-03-23: 최초 생성 (Gemini Agent)
+  - 2026-03-28: dbt_dtm 컬럼 추가 (hjpark)
 -#}
 
 {%- set start, end = get_date_intervals() -%}
@@ -26,6 +27,7 @@ select po.customer_id
      , sum(case when po.status = 'canceled' then 1 else 0 end) as canceled_orders
      , min(po.order_date) as first_purchase_order_date
      , max(po.order_date) as last_purchase_order_date
+     , current_timestamp::timestamp as dbt_dtm
   from {{ ref('stg_purchase_orders') }} as po
  where po.order_date >= '{{ start }}'::timestamp
    and po.order_date < '{{ end }}'::timestamp
