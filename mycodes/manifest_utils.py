@@ -8,6 +8,7 @@ import shutil
 import yaml
 import streamlit as st
 from datetime import datetime
+import networkx as nx
 
 
 def convert_to_dbt_ts(date_obj, is_end=False):
@@ -219,48 +220,229 @@ def get_latest_run_results(project_dir):
         pass
     return res
 
-def get_lineage_from_manifest(project_dir, model_name, up_depth, down_depth):
-    """반환: up_by_depth, down_by_depth, error"""
+def get_lineage_graph(project_dir, model_name, up_depth, down_depth):
+    """NetworkX를 사용하여 리니지 그래프와 모델 메타데이터를 추출하여 반환."""
     manifest = _get_manifest(project_dir)
     if not manifest:
         return None, None, "manifest.json 없음"
-    try:
-        nodes   = manifest.get('nodes', {})
-        sources = manifest.get('sources', {})
-        target_uid = next((uid for uid, n in nodes.items() if n.get('name') == model_name), None)
-        if not target_uid:
-            return None, None, "모델 탐색 실패"
-        up_d, down_d = {}, {}
 
-        def find_up(uid, depth):
-            if depth >= up_depth:
-                return
-            node = nodes.get(uid)
-            if node:
-                for p_uid in node.get('depends_on', {}).get('nodes', []):
-                    if p_uid.startswith('model.'):
-                        name = nodes[p_uid]['name']
-                        up_d.setdefault(depth + 1, set()).add(name)
-                        find_up(p_uid, depth + 1)
-                    elif p_uid.startswith('source.'):
-                        src = sources.get(p_uid)
-                        if src:
-                            name = f"{src['source_name']}.{src['name']} (Source)"
-                            up_d.setdefault(depth + 1, set()).add(name)
+    nodes_info = manifest.get('nodes', {})
+    sources_info = manifest.get('sources', {})
 
-        def find_down(uid, depth):
-            if depth >= down_depth:
-                return
-            for c_uid, node in nodes.items():
-                if uid in node.get('depends_on', {}).get('nodes', []) and c_uid.startswith('model.'):
-                    name = node['name']
-                    down_d.setdefault(depth + 1, set()).add(name)
-                    find_down(c_uid, depth + 1)
+    # 1. 전체 그래프 생성
+    G = nx.DiGraph()
+    for uid, node in nodes_info.items():
+        if uid.startswith('model.'):
+            G.add_node(uid, name=node['name'], type='model')
+            for p_uid in node.get('depends_on', {}).get('nodes', []):
+                if p_uid.startswith('model.') or p_uid.startswith('source.'):
+                    G.add_edge(p_uid, uid)
+        elif uid.startswith('source.'):
+            # source는 depends_on이 없으므로 간선 추가만 위해 노드 선행 등록 (필요시)
+            pass
 
-        find_up(target_uid, 0)
-        find_down(target_uid, 0)
-        up_by_depth   = {d: sorted(list(s)) for d, s in sorted(up_d.items())}
-        down_by_depth = {d: sorted(list(s)) for d, s in sorted(down_d.items())}
-        return up_by_depth, down_by_depth, None
-    except Exception as e:
-        return None, None, str(e)
+    for uid, src in sources_info.items():
+        G.add_node(uid, name=f"{src['source_name']}.{src['name']}", type='source')
+
+    # 2. 타겟 노드 찾기
+    target_uid = next((uid for uid, n in nodes_info.items() if n.get('name') == model_name), None)
+    if not target_uid:
+        return None, None, "모델 탐색 실패"
+
+    # 3. Upstream/Downstream Subgraph 추출
+    up_nodes = nx.single_source_shortest_path_length(G.reverse(), target_uid, cutoff=up_depth).keys()
+    down_nodes = nx.single_source_shortest_path_length(G, target_uid, cutoff=down_depth).keys()
+    subgraph_nodes = set(up_nodes) | set(down_nodes)
+    subgraph = G.subgraph(subgraph_nodes)
+
+    # 4. 실행 상태 매핑 (최신 run_results 로드)
+    run_results = get_latest_run_results(project_dir)
+    status_map = {r['Model Name']: r for r in run_results}
+
+    # 5. 결과 가공 (UI 렌더링용)
+    nodes_data = {}
+    for uid in subgraph.nodes():
+        node_type = G.nodes[uid]['type']
+        name = G.nodes[uid]['name']
+        
+        # 메타데이터 추출
+        mdata = nodes_info.get(uid) if node_type == 'model' else sources_info.get(uid)
+        desc = mdata.get('description', '') if mdata else ''
+        cols = []
+        if mdata and 'columns' in mdata:
+            for cname, cinfo in mdata['columns'].items():
+                cols.append({
+                    "name": cname,
+                    "type": cinfo.get('data_type', 'unknown'),
+                    "description": cinfo.get('description', '')
+                })
+
+        # 직계 관계 추출 (Subgraph 내 기준)
+        parents = [G.nodes[p]['name'] for p in G.predecessors(uid)]
+        children = [G.nodes[c]['name'] for c in G.successors(uid)]
+
+        nodes_data[name] = {
+            "uid": uid,
+            "name": name,
+            "type": node_type,
+            "status": status_map.get(name, {}).get('Status', 'not run'),
+            "rows": status_map.get(name, {}).get('Rows', '-'),
+            "description": desc,
+            "columns": cols,
+            "parents": parents,
+            "children": children,
+            "materialized": mdata.get('config', {}).get('materialized', '') if node_type == 'model' else ''
+        }
+
+    # Depth별 그룹화 (기존 UI 호환용)
+    up_by_depth = {}
+    for node_uid, depth in nx.single_source_shortest_path_length(G.reverse(), target_uid, cutoff=up_depth).items():
+        if depth == 0: continue
+        name = G.nodes[node_uid]['name']
+        display_name = name + " (Source)" if node_uid.startswith('source.') else name
+        up_by_depth.setdefault(depth, set()).add(display_name)
+
+    down_by_depth = {}
+    for node_uid, depth in nx.single_source_shortest_path_length(G, target_uid, cutoff=down_depth).items():
+        if depth == 0: continue
+        name = G.nodes[node_uid]['name']
+        down_by_depth.setdefault(depth, set()).add(name)
+
+    up_by_depth = {d: sorted(list(s)) for d, s in sorted(up_by_depth.items())}
+    down_by_depth = {d: sorted(list(s)) for d, s in sorted(down_by_depth.items())}
+
+    return up_by_depth, down_by_depth, nodes_data, None
+
+def get_lineage_from_manifest(project_dir, model_name, up_depth, down_depth):
+    """하위 호환성을 위한 래퍼 함수."""
+    up, down, _, err = get_lineage_graph(project_dir, model_name, up_depth, down_depth)
+    return up, down, err
+
+def calculate_meta_diff(db_cols, db_pk, db_comment, yaml_model_def):
+    """DB 정보와 YAML 정의를 비교하여 상세 차이점 반환."""
+    diff = {
+        "columns": {},
+        "pk_changed": False,
+        "comment_changed": False,
+        "has_critical": False,
+        "summary": []
+    }
+    
+    # 1. 컬럼 비교
+    yaml_cols = {c['name'].lower(): c for c in yaml_model_def.get('columns', [])}
+    db_cols_map = {c['name'].lower(): c for c in db_cols}
+    
+    all_col_names = sorted(set(yaml_cols.keys()) | set(db_cols_map.keys()))
+    
+    for cname in all_col_names:
+        y_c = yaml_cols.get(cname)
+        d_c = db_cols_map.get(cname)
+        
+        if not y_c:
+            diff["columns"][cname] = {"status": "added", "db_type": d_c['data_type']}
+            diff["has_critical"] = True
+        elif not d_c:
+            diff["columns"][cname] = {"status": "removed"}
+            diff["has_critical"] = True
+        else:
+            c_diff = {}
+            # 타입 비교 (contract 준수용: YAML에 아예 없거나 값이 다를 때 감지)
+            y_type = (y_c.get('data_type') or '').lower().strip()
+            d_type = d_c['data_type'].lower().strip()
+            
+            if not y_type:
+                c_diff["type_mismatch"] = ("(누락됨)", d_type)
+                diff["has_critical"] = True
+            elif y_type != d_type:
+                c_diff["type_mismatch"] = (y_type, d_type)
+                diff["has_critical"] = True
+            
+            # 설명 비교
+            y_desc = (y_c.get('description') or '').strip()
+            d_desc = (d_c.get('description') or '').strip()
+            if y_desc != d_desc:
+                c_diff["desc_diff"] = (y_desc, d_desc)
+            
+            if c_diff:
+                diff["columns"][cname] = {"status": "changed", "details": c_diff}
+
+    # 2. PK 비교
+    y_pk = yaml_model_def.get('config', {}).get('unique_key', [])
+    if isinstance(y_pk, str): y_pk = [y_pk]
+    y_pk = [k.lower() for k in y_pk]
+    d_pk = [k.lower() for k in db_pk]
+    
+    if sorted(y_pk) != sorted(d_pk):
+        diff["pk_changed"] = (y_pk, d_pk)
+        diff["has_critical"] = True
+
+    # 3. 테이블 코멘트 비교
+    y_comm = (yaml_model_def.get('description') or '').strip()
+    d_comm = (db_comment or '').strip()
+    if y_comm != d_comm:
+        diff["comment_changed"] = (y_comm, d_comm)
+
+    # 요약 정보 생성
+    added = len([c for c in diff["columns"].values() if c['status'] == "added"])
+    removed = len([c for c in diff["columns"].values() if c['status'] == "removed"])
+    type_m = len([c for c in diff["columns"].values() if c.get('details', {}).get('type_mismatch')])
+    desc_m = len([c for c in diff["columns"].values() if c.get('details', {}).get('desc_diff')])
+    
+    if added: diff["summary"].append(f"🆕 컬럼 추가 {added}")
+    if removed: diff["summary"].append(f"🗑️ 컬럼 삭제 {removed}")
+    if type_m: diff["summary"].append(f"📏 타입 불일치 {type_m}")
+    if desc_m: diff["summary"].append(f"📝 Column Comment 다름 {desc_m}")
+    if diff["pk_changed"]: diff["summary"].append("🔑 PK 변경")
+    if diff["comment_changed"]: diff["summary"].append("📁 Table Comment 다름")
+    
+    return diff
+
+def apply_smart_sync(yaml_model_def, db_cols, db_pk, db_comment, sync_desc=True):
+    """지능형 병합 로직 적용하여 새로운 YAML 모델 정의 생성."""
+    new_def = yaml_model_def.copy()
+    
+    # 1. Config (PK) 업데이트
+    if 'config' not in new_def: new_def['config'] = {}
+    if len(db_pk) == 1:
+        new_def['config']['unique_key'] = db_pk[0]
+    elif len(db_pk) > 1:
+        new_def['config']['unique_key'] = sorted(db_pk)
+    else:
+        new_def['config'].pop('unique_key', None)
+
+    # 2. 테이블 설명
+    y_desc = (new_def.get('description') or '').strip()
+    if not y_desc or sync_desc:
+        new_def['description'] = db_comment
+
+    # 3. 컬럼 병합
+    yaml_cols_map = {c['name'].lower(): c for c in new_def.get('columns', [])}
+    new_cols = []
+    
+    for d_c in db_cols:
+        cname = d_c['name']
+        cname_l = cname.lower()
+        y_c = yaml_cols_map.get(cname_l, {})
+        
+        # 기본 구조 (필수 반영)
+        updated_c = y_c.copy()
+        updated_c['name'] = cname
+        updated_c['data_type'] = d_c['data_type']
+        
+        # 설명 병합 (Smart Merge)
+        y_c_desc = (y_c.get('description') or '').strip()
+        if not y_c_desc or sync_desc:
+            updated_c['description'] = d_c['description']
+        
+        # Not Null 제약 조건 (Contract 준수)
+        if not d_c['is_nullable']:
+            if 'constraints' not in updated_c: updated_c['constraints'] = []
+            # 기존에 not_null이 있는지 확인
+            has_nn = any(cons.get('type') == 'not_null' for cons in updated_c['constraints'])
+            if not has_nn:
+                updated_c['constraints'].append({'type': 'not_null'})
+        
+        new_cols.append(updated_c)
+        
+    new_def['columns'] = new_cols
+    return new_def

@@ -1,5 +1,5 @@
 CREATE TABLE marts.customer_churn_risk_mart (
-    customer_id integer,
+    customer_id integer PRIMARY KEY,
     customer_name varchar(255),
     customer_email varchar(255),
     registration_date date,

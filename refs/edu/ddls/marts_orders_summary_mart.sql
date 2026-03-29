@@ -10,7 +10,8 @@ CREATE TABLE marts.orders_summary_mart (
     quantity integer,
     price numeric(10,2),
     item_total numeric(10,2),
-    dbt_dtm timestamp without time zone
+    dbt_dtm timestamp without time zone,
+    PRIMARY KEY (order_id, product_id)
 );
 
 COMMENT ON TABLE marts.orders_summary_mart IS '주문-고객-상품 통합 요약 마트 (mart 간 리니지 테스트용)';

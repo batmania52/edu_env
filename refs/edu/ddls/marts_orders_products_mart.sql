@@ -10,7 +10,8 @@ CREATE TABLE marts.orders_products_mart (
     product_price numeric(10,2),
     quantity integer,
     product_created_date date,
-    dbt_dtm timestamp without time zone
+    dbt_dtm timestamp without time zone,
+    PRIMARY KEY (order_id, product_id)
 );
 
 COMMENT ON TABLE marts.orders_products_mart IS '주문, 주문 항목 및 상품 데이터 마트 모델';

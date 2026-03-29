@@ -1,7 +1,7 @@
 CREATE SCHEMA IF NOT EXISTS marts;
 
 CREATE TABLE IF NOT EXISTS marts.purchase_order_summary (
-    customer_id INTEGER,
+    customer_id INTEGER PRIMARY KEY,
     customer_name VARCHAR(255),
     total_purchase_orders BIGINT,
     total_purchase_amount NUMERIC(10,2),

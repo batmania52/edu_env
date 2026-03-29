@@ -1,5 +1,5 @@
 CREATE TABLE stg.stg_products (
-    product_id integer,
+    product_id integer PRIMARY KEY,
     product_name varchar(255),
     product_category varchar(255),
     price numeric(10,2),

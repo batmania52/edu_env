@@ -1,5 +1,5 @@
 CREATE TABLE marts.orders_customers_mart (
-    order_id integer,
+    order_id integer PRIMARY KEY,
     customer_id integer,
     customer_name varchar(255),
     customer_email varchar(255),

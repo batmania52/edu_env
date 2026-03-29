@@ -7,6 +7,7 @@ import pandas as pd
 import glob
 import re
 import shutil
+import difflib
 from datetime import datetime, timedelta
 
 from db_utils import (
@@ -16,7 +17,8 @@ from db_utils import (
 from manifest_utils import (
     convert_to_dbt_ts, check_model_schema_exists, get_dbt_model_hierarchy,
     get_compiled_sql, get_before_sql_from_model,
-    cleanup_old_runs_by_date, get_latest_run_results, get_lineage_from_manifest,
+    cleanup_old_runs_by_date, get_latest_run_results, get_lineage_graph,
+    calculate_meta_diff, apply_smart_sync,
 )
 from validator import render_validation_ui
 from history import render_history_ui
@@ -121,8 +123,20 @@ def remove_model_from_others(project_dir, model_name, target_rel_path):
         except Exception:
             continue
 
-def build_model_entry(model_name, columns, pk, table_comment):
-    """YAML에 삽입할 모델 dict 생성 (공통 포맷)"""
+def build_model_entry(model_name, db_cols, pk, table_comment):
+    """YAML에 삽입할 모델 dict 생성 (contract/constraints 반영)"""
+    columns = []
+    for c in db_cols:
+        col_entry = {
+            "name": c['name'],
+            "description": c.get('description', ''),
+            "data_type": c.get('data_type', '')
+        }
+        # Not Null 제약 조건 추가 (is_nullable이 False인 경우)
+        if not c.get('is_nullable', True):
+            col_entry["constraints"] = [{"type": "not_null"}]
+        columns.append(col_entry)
+
     entry = {
         "name": model_name,
         "description": table_comment,
@@ -164,6 +178,8 @@ if 'init_unified' not in st.session_state:
         'up_list': {}, 'down_list': {},
         'full_up_list': {}, 'full_down_list': {},
         'lineage_focus_model': None,
+        'selected_lineage_model': None,  # 리니지에서 상세 정보를 보기 위해 선택된 모델
+        'lineage_nodes_data': {},        # 리니지 노드들의 상세 메타데이터 (NetworkX 결과)
         'up_depth': 0, 'down_depth': 0,        # 리니지 시각화 전용
         # Run 설정 (모델 선택 영역)
         'cb_upstream': False, 'cnt_upstream': 1,
@@ -225,13 +241,15 @@ def on_ui_change():
 
 def reset_lineage():
     """리니지 시각화 state 전체 초기화. exclude 선택은 유지."""
-    st.session_state['up_list']             = {}
-    st.session_state['down_list']           = {}
-    st.session_state['full_up_list']        = {}
-    st.session_state['full_down_list']      = {}
-    st.session_state['lineage_focus_model'] = None
-    st.session_state['up_depth']            = 0
-    st.session_state['down_depth']          = 0
+    st.session_state['up_list']               = {}
+    st.session_state['down_list']             = {}
+    st.session_state['full_up_list']          = {}
+    st.session_state['full_down_list']        = {}
+    st.session_state['lineage_focus_model']   = None
+    st.session_state['selected_lineage_model']= None
+    st.session_state['lineage_nodes_data']    = {}
+    st.session_state['up_depth']              = 0
+    st.session_state['down_depth']            = 0
 
 def on_model_change():
     """모델 selectbox 변경 시 호출 — SQL/실행 상태 + 리니지 모두 초기화."""
@@ -258,11 +276,13 @@ def on_run_mode_change():
 def focus_lineage_model(model_name):
     """리니지 버튼 클릭 시 해당 모델로 포커스 이동 (순수 시각화 전용)."""
     st.session_state['lineage_focus_model'] = model_name
+    st.session_state['selected_lineage_model'] = model_name
     st.session_state['_lineage_auto_run']   = True
     st.session_state['up_list']        = {}
     st.session_state['down_list']      = {}
     st.session_state['full_up_list']   = {}
     st.session_state['full_down_list'] = {}
+    st.session_state['lineage_nodes_data'] = {}
 
 # ============================================================
 # 6. 앱 레이아웃
@@ -322,8 +342,8 @@ _veri_exists, _dbtlog_exists = (
 )
 _history_tab_label = "📋 이력" if (_veri_exists or _dbtlog_exists) else "📋 이력 (미설정)"
 
-tab_runner, tab_generator, tab_validator, tab_history = st.tabs([
-    "🚀 dbt Runner", "📝 YAML Generator", "🔍 데이터 검증", _history_tab_label
+tab_runner, tab_lineage, tab_generator, tab_validator, tab_history = st.tabs([
+    "🚀 dbt Runner", "🧬 리니지 분석", "📝 YAML Generator", "🔍 데이터 검증", _history_tab_label
 ])
 
 # ============================================================
@@ -385,23 +405,6 @@ with tab_runner:
 
     schema_ok, sc_err = check_model_schema_exists(project_dir, sel_m) if sel_m else (True, None)
 
-    # 리니지 포커스 모델 자동 분석 (focus_lineage_model 콜백 후)
-    if st.session_state.pop('_lineage_auto_run', False):
-        focus_m = st.session_state.get('lineage_focus_model') or sel_m
-        if focus_m:
-            up, dn, err = get_lineage_from_manifest(project_dir, focus_m, 10, 10)
-            if not err:
-                full_up = up or {}
-                full_dn = dn or {}
-                st.session_state['full_up_list']   = full_up
-                st.session_state['full_down_list'] = full_dn
-                st.session_state.up_depth   = max(full_up.keys()) if full_up else 0
-                st.session_state.down_depth = max(full_dn.keys()) if full_dn else 0
-                st.session_state['up_list']   = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
-                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
-                st.rerun()
-
-
     if sel_m:
         if not schema_ok:
             st.error(sc_err)
@@ -431,13 +434,15 @@ with tab_runner:
                                          disabled=not cb_dn, on_change=on_counter_change)
 
         if cb_up or cb_dn:
-            # 리니지 데이터 없으면 지금 즉시 로드 (manifest 캐시 사용)
+            # 리니지 데이터가 없으면 명령어를 위해 manifest 로드 (단순 리스트용)
             if not (st.session_state.get('full_up_list') or st.session_state.get('full_down_list')):
+                from manifest_utils import get_lineage_from_manifest
                 _l_up, _l_dn, _l_err = get_lineage_from_manifest(project_dir, sel_m, 10, 10)
                 if not _l_err:
                     st.session_state['full_up_list']   = _l_up or {}
                     st.session_state['full_down_list'] = _l_dn or {}
                     st.rerun()
+            
             _ex_opts = [f"🎯 {sel_m}"]  # 선택 모델 자신 항상 포함
             if cb_up:
                 for _d, _models in st.session_state.get('full_up_list', {}).items():
@@ -456,110 +461,6 @@ with tab_runner:
                                key="ms_exclude", on_change=on_ui_change)
             else:
                 st.caption("💡 해당 depth 범위에 exclude 가능한 모델이 없습니다.")
-
-        st.divider()
-
-        # Lineage 컨트롤
-        _has_full = bool(st.session_state.get('full_up_list') or st.session_state.get('full_down_list'))
-        dc1, dc2, dc3, dc4 = st.columns([1, 1, 1, 1])
-        with dc1:
-            u1, u2 = st.columns(2)
-            if u1.button("➖", key="um", disabled=not _has_full):
-                st.session_state.up_depth = max(0, st.session_state.up_depth - 1)
-                full_up = st.session_state.get('full_up_list', {})
-                st.session_state['up_list'] = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
-            if u2.button("➕", key="up", disabled=not _has_full):
-                st.session_state.up_depth += 1
-                full_up = st.session_state.get('full_up_list', {})
-                st.session_state['up_list'] = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
-            st.write(f"**업스트림 Depth: {st.session_state.up_depth}**")
-        with dc2:
-            if st.button("🧬 Lineage 분석", use_container_width=True, disabled=not schema_ok):
-                with st.spinner("분석 중..."):
-                    # 분석 시작: 포커스를 현재 선택 모델로 초기화
-                    st.session_state['lineage_focus_model'] = sel_m
-                    up, dn, err = get_lineage_from_manifest(project_dir, sel_m, 10, 10)
-                    if err:
-                        st.error(err)
-                    else:
-                        full_up = up or {}
-                        full_dn = dn or {}
-                        st.session_state['full_up_list']   = full_up
-                        st.session_state['full_down_list'] = full_dn
-                        # 탐색 depth를 최대 가용값으로 자동 설정
-                        st.session_state.up_depth   = max(full_up.keys()) if full_up else 0
-                        st.session_state.down_depth = max(full_dn.keys()) if full_dn else 0
-                        st.session_state['up_list']   = {d: v for d, v in full_up.items() if d <= st.session_state.up_depth}
-                        st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
-                        st.rerun()  # dc1/dc3 depth 표시를 업데이트된 값으로 재렌더링
-        with dc3:
-            d1, d2 = st.columns(2)
-            if d1.button("➖", key="dm", disabled=not _has_full):
-                st.session_state.down_depth = max(0, st.session_state.down_depth - 1)
-                full_dn = st.session_state.get('full_down_list', {})
-                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
-            if d2.button("➕", key="dp", disabled=not _has_full):
-                st.session_state.down_depth += 1
-                full_dn = st.session_state.get('full_down_list', {})
-                st.session_state['down_list'] = {d: v for d, v in full_dn.items() if d <= st.session_state.down_depth}
-            st.write(f"**다운스트림 Depth: {st.session_state.down_depth}**")
-        with dc4:
-            st.write("")
-            if st.button("🔄 Lineage 초기화", use_container_width=True, disabled=not _has_full):
-                reset_lineage()   # up/down_depth 초기화, exclude 유지
-                st.rerun()
-
-        # Lineage 결과 표시
-        if schema_ok and (st.session_state.up_list or st.session_state.down_list):
-            up_d   = st.session_state.up_list
-            down_d = st.session_state.down_list
-            max_up_d   = max(up_d.keys(),   default=0)
-            max_down_d = max(down_d.keys(), default=0)
-            total_cols = max_up_d + 1 + max_down_d
-            font_size  = max(9, 14 - max(0, total_cols - 4))
-
-            if font_size < 14:
-                st.markdown(f"""<style>
-div[data-testid="stHorizontalBlock"]:has(button[key="lineage_center_model"]) button p {{
-    font-size: {font_size}px !important;
-}}
-</style>""", unsafe_allow_html=True)
-
-            all_cols = st.columns(total_cols) if total_cols > 0 else []
-            lineage_center = st.session_state.get('lineage_focus_model') or sel_m
-
-            # 업스트림
-            for d in range(max_up_d, 0, -1):
-                col_idx = max_up_d - d
-                with all_cols[col_idx]:
-                    st.caption(f"⬆️ Depth {d}")
-                    for m in up_d.get(d, []):
-                        if "(Source)" in m:
-                            st.button(f"🔌 {m}", key=f"src_{d}_{m}",
-                                      use_container_width=True, disabled=True)
-                        else:
-                            st.button(m, key=f"ub_{d}_{m}",
-                                      on_click=focus_lineage_model, args=(m,),
-                                      use_container_width=True)
-
-            # 포커스 모델 (중앙)
-            with all_cols[max_up_d]:
-                is_focus_diff = lineage_center != sel_m
-                st.caption("▶ 포커스 모델" if is_focus_diff else "▶ 현재 모델")
-                st.button(
-                    lineage_center, key="lineage_center_model",
-                    use_container_width=True, disabled=True
-                )
-
-            # 다운스트림
-            for d in range(1, max_down_d + 1):
-                col_idx = max_up_d + d
-                with all_cols[col_idx]:
-                    st.caption(f"⬇️ Depth {d}")
-                    for m in down_d.get(d, []):
-                        st.button(m, key=f"db_{d}_{m}",
-                                  on_click=focus_lineage_model, args=(m,),
-                                  use_container_width=True)
 
     st.divider()
 
@@ -691,6 +592,205 @@ div[data-testid="stHorizontalBlock"]:has(button[key="lineage_center_model"]) but
                     st.rerun()  # tab_generator st.stop() 전에 rerun 종료
 
 # ============================================================
+# TAB 1.5 : 🧬 리니지 분석
+# ============================================================
+with tab_lineage:
+    st.subheader("🧬 dbt 리니지 분석")
+    
+    # 1. 모델 선택 (Runner 탭과 동일한 hierarchy/m2g 사용)
+    lc_top1, lc_top2 = st.columns([2, 2])
+    with lc_top1:
+        gp_p = "📂 모델 그룹을 선택하세요"
+        # Runner 탭과 별개의 Key를 사용하되 값은 세션에서 관리
+        sel_g = st.selectbox("📁 분석 그룹 선택", [gp_p] + list(hierarchy.keys()),
+                             key="lt_sb_group", on_change=on_model_change)
+    with lc_top2:
+        mp_p = "📂 모델을 선택하세요"
+        sel_m = None
+        if sel_g != gp_p:
+            mv = st.selectbox("📂 분석 모델 선택", [mp_p] + hierarchy[sel_g],
+                              key="lt_sb_model", on_change=on_model_change)
+            if mv != mp_p:
+                sel_m = mv
+
+    # 리니지 포커스 모델 자동 분석 (focus_lineage_model 콜백 후)
+    if st.session_state.pop('_lineage_auto_run', False):
+        focus_m = st.session_state.get('lineage_focus_model') or sel_m
+        if focus_m:
+            up, dn, nodes_d, err = get_lineage_graph(project_dir, focus_m, 10, 10)
+            if not err:
+                st.session_state['full_up_list']   = up or {}
+                st.session_state['full_down_list'] = dn or {}
+                st.session_state['lineage_nodes_data'] = nodes_d or {}
+                st.session_state.up_depth   = max(up.keys()) if up else 0
+                st.session_state.down_depth = max(dn.keys()) if dn else 0
+                st.session_state['up_list']   = {d: v for d, v in up.items() if d <= st.session_state.up_depth}
+                st.session_state['down_list'] = {d: v for d, v in dn.items() if d <= st.session_state.down_depth}
+                st.rerun()
+
+    def select_detail_model(m_name):
+        """그래프에서 모델 클릭 시 상세 정보만 업데이트 (포커스는 유지)"""
+        st.session_state['selected_lineage_model'] = m_name
+
+    # 컨트롤 영역
+    lc1, lc2, lc3 = st.columns([2, 1, 1])
+    with lc1:
+        st.info(f"📍 현재 분석 대상: **{sel_m or '선택되지 않음'}**")
+    with lc2:
+        if st.button("🧬 리니지 분석 실행", use_container_width=True, disabled=not sel_m):
+            with st.spinner("분석 중..."):
+                st.session_state['lineage_focus_model'] = sel_m
+                st.session_state['selected_lineage_model'] = sel_m
+                up, dn, nodes_d, err = get_lineage_graph(project_dir, sel_m, 10, 10)
+                if not err:
+                    st.session_state['full_up_list']   = up or {}
+                    st.session_state['full_down_list'] = dn or {}
+                    st.session_state['lineage_nodes_data'] = nodes_d or {}
+                    st.session_state.up_depth   = max(up.keys()) if up else 0
+                    st.session_state.down_depth = max(dn.keys()) if dn else 0
+                    st.session_state['up_list']   = {d: v for d, v in up.items() if d <= st.session_state.up_depth}
+                    st.session_state['down_list'] = {d: v for d, v in dn.items() if d <= st.session_state.down_depth}
+                    st.rerun()
+    with lc3:
+        if st.button("🔄 리니지 초기화", key="btn_reset_lineage_tab", use_container_width=True):
+            reset_lineage()
+            st.rerun()
+
+    st.divider()
+
+    # Depth 조절 및 그래프 렌더링
+    if st.session_state.get('lineage_nodes_data'):
+        # Depth 컨트롤러
+        dc1, dc2, dc3 = st.columns([1, 2, 1])
+        with dc1:
+            u1, u2 = st.columns(2)
+            if u1.button("➖", key="lt_um"):
+                st.session_state.up_depth = max(0, st.session_state.up_depth - 1)
+                st.session_state['up_list'] = {d: v for d, v in st.session_state.full_up_list.items() if d <= st.session_state.up_depth}
+            if u2.button("➕", key="lt_up"):
+                st.session_state.up_depth += 1
+                st.session_state['up_list'] = {d: v for d, v in st.session_state.full_up_list.items() if d <= st.session_state.up_depth}
+            st.write(f"**업스트림 Depth: {st.session_state.up_depth}**")
+        with dc3:
+            d1, d2 = st.columns(2)
+            if d1.button("➖", key="lt_dm"):
+                st.session_state.down_depth = max(0, st.session_state.down_depth - 1)
+                st.session_state['down_list'] = {d: v for d, v in st.session_state.full_down_list.items() if d <= st.session_state.down_depth}
+            if d2.button("➕", key="lt_dp"):
+                st.session_state.down_depth += 1
+                st.session_state['down_list'] = {d: v for d, v in st.session_state.full_down_list.items() if d <= st.session_state.down_depth}
+            st.write(f"**다운스트림 Depth: {st.session_state.down_depth}**")
+
+        # 리니지 그래프 렌더링 (그리드 방식)
+        up_d   = st.session_state.up_list
+        down_d = st.session_state.down_list
+        nodes_data = st.session_state.lineage_nodes_data
+        max_up_d   = max(up_d.keys(),   default=0)
+        max_down_d = max(down_d.keys(), default=0)
+        total_cols = max_up_d + 1 + max_down_d
+        
+        all_cols = st.columns(total_cols)
+        lineage_center = st.session_state.lineage_focus_model
+        selected_m = st.session_state.get('selected_lineage_model')
+
+        highlight_nodes = set()
+        if selected_m and selected_m in nodes_data:
+            highlight_nodes.update(nodes_data[selected_m].get('parents', []))
+            highlight_nodes.update(nodes_data[selected_m].get('children', []))
+            highlight_nodes.add(selected_m)
+
+        def get_status_emoji(m_name):
+            _m = m_name.replace(" (Source)", "")
+            status = nodes_data.get(_m, {}).get('status', 'not run')
+            if status == 'success': return "✅"
+            if status == 'error' or status == 'fail': return "❌"
+            if status == 'skipped': return "⏭️"
+            return "⚪"
+
+        # 렌더링: 업스트림
+        for d in range(max_up_d, 0, -1):
+            col_idx = max_up_d - d
+            with all_cols[col_idx]:
+                st.caption(f"⬆️ Depth {d}")
+                for m in up_d.get(d, []):
+                    m_clean = m.replace(" (Source)", "")
+                    is_src = " (Source)" in m
+                    emoji = get_status_emoji(m)
+                    label = f"{emoji} {m}"
+                    if m_clean in highlight_nodes: label = f"🔗 {label}"
+                    
+                    if st.button(label, key=f"lt_ub_{d}_{m}",
+                              on_click=focus_lineage_model if not is_src else None, args=(m_clean,),
+                              use_container_width=True,
+                              type="primary" if m_clean == selected_m else "secondary",
+                              disabled=is_src):
+                        pass
+
+        # 렌더링: 포커스 모델 (중앙)
+        with all_cols[max_up_d]:
+            st.caption("🎯 포커스 모델")
+            emoji = get_status_emoji(lineage_center)
+            label = f"{emoji} {lineage_center}"
+            if st.button(label, key="lt_center_model",
+                      on_click=select_detail_model, args=(lineage_center,),
+                      use_container_width=True,
+                      type="primary" if lineage_center == selected_m else "secondary"):
+                pass
+
+        # 렌더링: 다운스트림
+        for d in range(1, max_down_d + 1):
+            col_idx = max_up_d + d
+            with all_cols[col_idx]:
+                st.caption(f"⬇️ Depth {d}")
+                for m in down_d.get(d, []):
+                    emoji = get_status_emoji(m)
+                    label = f"{emoji} {m}"
+                    if m in highlight_nodes: label = f"🔗 {label}"
+                    
+                    if st.button(label, key=f"lt_db_{d}_{m}",
+                              on_click=focus_lineage_model, args=(m,),
+                              use_container_width=True,
+                              type="primary" if m == selected_m else "secondary"):
+                        pass
+
+        # 상세 정보 패널
+        if selected_m and selected_m in nodes_data:
+            mdata = nodes_data[selected_m]
+            st.divider()
+            with st.expander(f"📖 {selected_m} 모델 상세 정보", expanded=True):
+                si1, si2 = st.columns([1, 2])
+                with si1:
+                    st.write(f"**Type:** `{mdata['type']}`")
+                    st.write(f"**Materialized:** `{mdata['materialized']}`")
+                    st.write(f"**Status:** `{mdata['status']}`")
+                    st.write(f"**Rows:** `{mdata['rows']}`")
+                    st.write(f"**Description:** {mdata['description'] or '설명 없음'}")
+                with si2:
+                    if mdata['columns']:
+                        st.write("**Columns:**")
+                        cdf = pd.DataFrame(mdata['columns'])
+                        st.dataframe(cdf, use_container_width=True, hide_index=True)
+                # SQL 뷰어 (컴파일된 SQL 및 before_sql 표시)
+                if mdata['type'] == 'model':
+                    # 1. before_sql 추출 및 렌더링
+                    b_sql = get_before_sql_from_model(
+                        project_dir, selected_m,
+                        convert_to_dbt_ts(st.session_state['start_dt_widget']),
+                        convert_to_dbt_ts(st.session_state['end_dt_widget'], True)
+                    )
+                    if b_sql:
+                        _render_before_sql(b_sql)
+
+                    # 2. Compiled SQL 렌더링
+                    sql = get_compiled_sql(project_dir, selected_m)
+                    if sql:
+                        st.caption("📄 Compiled SQL")
+                        st.code(sql, language="sql")
+
+    else:
+        st.info("💡 모델을 선택한 후 '리니지 분석 실행' 버튼을 눌러주세요.")
+
+# ============================================================
 # TAB 2 : YAML Generator (구 Streamlit Generator + 구 CLI 통합)
 # ============================================================
 with tab_generator:
@@ -797,17 +897,23 @@ with tab_generator:
             with st.spinner("테이블 분석 중..."):
                 for t in selected_tables:
                     try:
-                        cols, pk, t_comment = get_table_detail(db_config, current_sc, t)
-                        new_def = build_model_entry(t, cols, pk, t_comment)
+                        db_cols, db_pk, db_comm = get_table_detail(db_config, current_sc, t)
                         ex_file, ex_def = find_existing_model_definition(project_dir, t)
-                        is_same = (json.dumps(ex_def, sort_keys=True) ==
-                                   json.dumps(new_def, sort_keys=True)) if ex_def else False
+                        
+                        diff_info = None
+                        is_same = False
+                        if ex_def:
+                            diff_info = calculate_meta_diff(db_cols, db_pk, db_comm, ex_def)
+                            is_same = not bool(diff_info["summary"])
+                        
                         res_list.append({
                             "name": t,
                             "status": f"존재함 ({ex_file})" if ex_file else "신규",
                             "is_same": is_same,
                             "ex_file": ex_file,
-                            "model_def": new_def,
+                            "ex_def": ex_def,
+                            "db_meta": {"cols": db_cols, "pk": db_pk, "comm": db_comm},
+                            "diff": diff_info,
                             "applied": False
                         })
                     except Exception as e:
@@ -835,14 +941,16 @@ with tab_generator:
                 color_tag = ":green"
                 label_tag = "✅ 반영됨"
             elif "존재함" in itm['status']:
-                color_tag = ":orange"
-                label_tag = itm['status']
+                if itm['is_same']:
+                    color_tag = ":gray"
+                    label_tag = "내용 동일"
+                else:
+                    color_tag = ":orange"
+                    diff_summary = ", ".join(itm['diff']['summary']) if itm['diff'] else "변경됨"
+                    label_tag = f"⚠️ {diff_summary}"
             else:
                 color_tag = ":blue"
-                label_tag = itm['status']
-
-            if not itm['applied'] and itm['is_same']:
-                label_tag += " | 내용 동일"
+                label_tag = "🆕 신규 모델"
 
             with st.expander(
                 f"📄 {itm['name']} | {color_tag}[{label_tag}]",
@@ -854,9 +962,15 @@ with tab_generator:
                     col1, col2 = st.columns([1, 2])
                     with col1:
                         do_apply = st.checkbox(
-                            "반영 포함", key=f"chk_{itm['name']}",
+                            "동기화 포함", key=f"chk_{itm['name']}",
                             value=not itm['is_same']
                         )
+                        if "존재함" in itm['status'] and not itm['is_same']:
+                            st.session_state.setdefault(f"sync_desc_{itm['name']}", True)
+                            sync_desc = st.checkbox("설명(Description)도 함께 업데이트", 
+                                                   key=f"sync_desc_{itm['name']}")
+                        else:
+                            sync_desc = True
                     with col2:
                         path_opts = v_yml + ["[신규 파일 생성]"]
                         default_idx = (path_opts.index(itm['ex_file'])
@@ -873,28 +987,103 @@ with tab_generator:
                                 value=_new_default,
                                 key=f"new_{itm['name']}"
                             )
-                            # .yml 확장자 강제
-                            if _new_path and not _new_path.endswith(('.yml', '.yaml')):
-                                st.warning("⚠️ 경로는 .yml 또는 .yaml 확장자로 끝나야 합니다.")
                             target_path = _new_path
+
+                    # 상세 Diff 내역 표시
+                    if "존재함" in itm['status'] and not itm['is_same'] and itm['diff']:
+                        st.markdown("#### 🔍 상세 변경 내역")
+                        
+                        # 1. 테이블 레벨 변경 (PK, Comment)
+                        if itm['diff']['comment_changed']:
+                            o_comm, n_comm = itm['diff']['comment_changed']
+                            st.info(f"📁 **Table Comment 다름**\n- 기존: `{o_comm or '(없음)'}`\n- 최신: `{n_comm}`")
+                        
+                        if itm['diff']['pk_changed']:
+                            o_pk, n_pk = itm['diff']['pk_changed']
+                            st.warning(f"🔑 **PK 변경 감지**: `{o_pk}` → `{n_pk}`")
+
+                        # 2. 컬럼 변경 내역 테이블
+                        diff_rows = []
+                        for cname, cinfo in itm['diff']['columns'].items():
+                            status = cinfo['status']
+                            details = cinfo.get('details', {})
+                            
+                            row = {"컬럼명": cname, "상태": status, "기존(YAML)": "-", "최신(DB)": "-"}
+                            if status == "added":
+                                row["상태"] = "🆕 신규 컬럼"
+                                row["최신(DB)"] = f"타입: {cinfo['db_type']}"
+                            elif status == "removed":
+                                row["상태"] = "🗑️ 삭제됨"
+                            elif status == "changed":
+                                d_parts = []
+                                if "type_mismatch" in details:
+                                    row["기존(YAML)"] = f"타입: {details['type_mismatch'][0]}"
+                                    row["최신(DB)"] = f"타입: {details['type_mismatch'][1]}"
+                                    d_parts.append("📏 타입 불일치")
+                                if "desc_diff" in details:
+                                    d_parts.append("📝 Column Comment 다름")
+                                if d_parts: row["상태"] = ", ".join(d_parts)
+                            
+                            diff_rows.append(row)
+                        
+                        if diff_rows:
+                            st.table(pd.DataFrame(diff_rows))
+
                     if do_apply:
+                        # Smart Sync 적용된 모델 정의 생성
+                        if itm['ex_def']:
+                            final_def = apply_smart_sync(
+                                itm['ex_def'], 
+                                itm['db_meta']['cols'], 
+                                itm['db_meta']['pk'], 
+                                itm['db_meta']['comm'],
+                                sync_desc=sync_desc
+                            )
+                        else:
+                            # 신규 모델인 경우 기본 생성
+                            final_def = build_model_entry(
+                                itm['name'], 
+                                itm['db_meta']['cols'], 
+                                itm['db_meta']['pk'], 
+                                itm['db_meta']['comm']
+                            )
+                            
                         ap_tasks.append({
                             "index": idx,
                             "name": itm['name'],
                             "path": target_path,
-                            "model_def": itm['model_def']
+                            "model_def": final_def
                         })
 
-        # YAML 미리보기
-        if st.button("📄 YAML 내용 미리보기", use_container_width=True):
+        # YAML 미리보기 (Diff 기반 하이라이팅)
+        if st.button("📄 YAML 변경사항 미리보기", use_container_width=True):
             if ap_tasks:
-                st.code(
-                    yaml.dump(
-                        {"version": 2, "models": [t['model_def'] for t in ap_tasks]},
-                        sort_keys=False, allow_unicode=True
-                    ),
-                    language="yaml"
-                )
+                st.markdown("#### 📝 적용될 변경사항 (Diff)")
+                for task in ap_tasks:
+                    # 해당 태스크의 원본 모델 데이터 찾기
+                    itm = next(i for i in st.session_state.gen_analysis_data if i['name'] == task['name'])
+                    
+                    st.write(f"**{task['name']}** (`{task['path']}`)")
+                    
+                    # 기존 YAML (없으면 빈 문자열)
+                    old_yaml = yaml.dump(itm.get('ex_def'), sort_keys=False, allow_unicode=True) if itm.get('ex_def') else ""
+                    # 새 YAML
+                    new_yaml = yaml.dump(task['model_def'], sort_keys=False, allow_unicode=True)
+                    
+                    # Diff 생성
+                    diff = difflib.unified_diff(
+                        old_yaml.splitlines(),
+                        new_yaml.splitlines(),
+                        fromfile='기존 YAML',
+                        tofile='새 YAML',
+                        lineterm=''
+                    )
+                    diff_text = "\n".join(diff)
+                    
+                    if diff_text:
+                        st.code(diff_text, language="diff")
+                    else:
+                        st.info("변경 사항 없음 (완전 일치)")
             else:
                 st.warning("선택된 모델이 없습니다.")
 

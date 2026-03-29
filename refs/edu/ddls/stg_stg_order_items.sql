@@ -1,5 +1,5 @@
 CREATE TABLE stg.stg_order_items (
-    order_item_id integer,
+    order_item_id integer PRIMARY KEY,
     order_id integer,
     product_id integer,
     quantity integer,

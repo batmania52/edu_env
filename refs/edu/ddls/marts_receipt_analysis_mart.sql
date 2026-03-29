@@ -1,5 +1,5 @@
 CREATE TABLE marts.receipt_analysis_mart (
-    receipt_id integer,
+    receipt_id integer PRIMARY KEY,
     order_id integer,
     customer_id integer,
     customer_name character varying(255),

@@ -5,10 +5,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: order_id
   columns:
   - name: order_id
     description: 주문의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_id
     description: 고객에 대한 외래 키
     data_type: integer
@@ -26,10 +29,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: product_id
   columns:
   - name: product_id
     description: 상품의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: product_name
     description: 상품 이름
     data_type: character varying(255)
@@ -50,62 +56,63 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
-    unique_key:
-    - purchase_order_id
+    unique_key: purchase_order_id
   columns:
   - name: purchase_order_id
+    data_type: integer
     description: 발주 고유 ID
-    data_type: integer
   - name: customer_id
-    description: 발주 고객 ID
     data_type: integer
+    description: 발주 고객 ID
   - name: order_date
+    data_type: timestamp without time zone
     description: 발주 날짜 및 시간
-    data_type: timestamp without time zone
   - name: total_amount
-    description: 발주 총 금액
     data_type: numeric(10,2)
+    description: 발주 총 금액
   - name: status
-    description: '발주 상태 (예: pending, completed, canceled)'
     data_type: character varying(50)
+    description: '발주 상태 (예: pending, completed, canceled)'
   - name: dbt_dtm
-    description: dbt 적재 일시
     data_type: timestamp without time zone
+    description: dbt 적재 일시
 - name: stg_purchase_orders2
   description: 발주 데이터 (before_sql 다중 구문 테스트용)
   config:
     materialized: incremental
     incremental_strategy: append
-    unique_key:
-    - purchase_order_id
+    unique_key: purchase_order_id
   columns:
   - name: purchase_order_id
+    data_type: integer
     description: 발주 고유 ID
-    data_type: integer
   - name: customer_id
-    description: 발주 고객 ID
     data_type: integer
+    description: 발주 고객 ID
   - name: order_date
+    data_type: timestamp without time zone
     description: 발주 날짜 및 시간
-    data_type: timestamp without time zone
   - name: total_amount
-    description: 발주 총 금액
     data_type: numeric(10,2)
+    description: 발주 총 금액
   - name: status
-    description: '발주 상태 (예: pending, completed, canceled)'
     data_type: character varying(50)
+    description: '발주 상태 (예: pending, completed, canceled)'
   - name: dbt_dtm
-    description: dbt 적재 일시
     data_type: timestamp without time zone
+    description: dbt 적재 일시
 - name: stg_receipts
   description: 영수증 데이터의 스테이징 모델
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: receipt_id
   columns:
   - name: receipt_id
     description: 영수증 항목 고유 ID
     data_type: integer
+    constraints:
+    - type: not_null
   - name: order_id
     description: 주문 ID
     data_type: integer
@@ -150,10 +157,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: customer_id
   columns:
   - name: customer_id
     description: 고객의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_name
     description: 고객 이름
     data_type: character varying(255)
@@ -171,10 +181,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: order_item_id
   columns:
   - name: order_item_id
     description: 주문 항목의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: order_id
     description: 주문에 대한 외래 키
     data_type: integer

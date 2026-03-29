@@ -101,8 +101,9 @@ def get_table_detail(db_config, schema_name, table_name):
         cur.execute(
             pgsql.SQL("""
             SELECT a.attname,
-                   format_type(a.atttypid, a.atttypmod),
-                   pg_catalog.col_description(a.attrelid, a.attnum)
+                   format_type(a.atttypid, a.atttypmod) as data_type,
+                   pg_catalog.col_description(a.attrelid, a.attnum) as description,
+                   NOT a.attnotnull as is_nullable
             FROM pg_catalog.pg_attribute a
             WHERE a.attrelid = {}::regclass
               AND a.attnum > 0
@@ -110,7 +111,14 @@ def get_table_detail(db_config, schema_name, table_name):
             ORDER BY a.attnum
             """).format(pgsql.Literal(qualified))
         )
-        columns = [{"name": r[0], "data_type": r[1], "description": r[2] or ""} for r in cur.fetchall()]
+        columns = [
+            {
+                "name": r[0], 
+                "data_type": r[1], 
+                "description": r[2] or "",
+                "is_nullable": r[3]
+            } for r in cur.fetchall()
+        ]
         cur.execute(
             pgsql.SQL("SELECT obj_description({}::regclass, 'pg_class')")
             .format(pgsql.Literal(qualified))

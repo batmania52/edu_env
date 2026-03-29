@@ -1,5 +1,5 @@
 CREATE TABLE stg.stg_orders (
-    order_id integer,
+    order_id integer PRIMARY KEY,
     customer_id integer,
     order_date timestamp without time zone,
     total_amount numeric(10,2),

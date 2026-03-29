@@ -5,10 +5,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: customer_id
   columns:
   - name: customer_id
     description: 고객의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_name
     description: 고객 이름
     data_type: character varying(255)
@@ -47,12 +50,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
-    unique_key:
-    - customer_id
+    unique_key: customer_id
   columns:
   - name: customer_id
     description: 고객 ID (기본 키)
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_name
     description: 고객 이름
     data_type: character varying(255)
@@ -60,11 +64,11 @@ models:
     description: 고객 이메일
     data_type: character varying(255)
   - name: first_order_date
+    data_type: date
     description: 고객의 첫 주문 날짜
-    data_type: date
   - name: last_order_date
-    description: 고객의 마지막 주문 날짜
     data_type: date
+    description: 고객의 마지막 주문 날짜
   - name: total_receipt_count
     description: 고객의 총 주문 건수
     data_type: bigint
@@ -85,10 +89,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: order_id
   columns:
   - name: order_id
     description: 주문의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_id
     description: 고객에 대한 외래 키
     data_type: integer
@@ -115,10 +122,15 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
   columns:
   - name: order_id
     description: 주문의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_id
     description: 고객에 대한 외래 키
     data_type: integer
@@ -131,6 +143,8 @@ models:
   - name: product_id
     description: 상품 ID
     data_type: integer
+    constraints:
+    - type: not_null
   - name: quantity
     description: 상품 수량
     data_type: integer
@@ -148,10 +162,15 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
   columns:
   - name: order_id
     description: 주문의 기본 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_id
     description: 고객에 대한 외래 키
     data_type: integer
@@ -164,6 +183,8 @@ models:
   - name: product_id
     description: 상품에 대한 외래 키
     data_type: integer
+    constraints:
+    - type: not_null
   - name: product_name
     description: 상품 이름
     data_type: character varying(255)
@@ -190,10 +211,15 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
   columns:
   - name: order_id
     description: 주문 ID (복합 PK)
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_id
     description: 고객 ID
     data_type: integer
@@ -215,6 +241,8 @@ models:
   - name: product_id
     description: 상품 ID (복합 PK)
     data_type: integer
+    constraints:
+    - type: not_null
   - name: quantity
     description: 상품 수량
     data_type: integer
@@ -232,10 +260,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: customer_id
   columns:
   - name: customer_id
     description: 고객 고유 ID
     data_type: integer
+    constraints:
+    - type: not_null
   - name: customer_name
     description: 고객 이름
     data_type: character varying(255)
@@ -268,10 +299,13 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
+    unique_key: receipt_id
   columns:
   - name: receipt_id
     description: 영수증 고유 ID
     data_type: integer
+    constraints:
+    - type: not_null
   - name: order_id
     description: 주문 ID
     data_type: integer

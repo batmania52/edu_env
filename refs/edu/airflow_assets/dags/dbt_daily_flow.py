@@ -19,7 +19,7 @@ from dbt_cosmos_utils import get_dbt_tag_task_group
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,  # 지침: 이전 실행 성공 여부에 의존하지 않음
-    'start_date': datetime(2024, 1, 1),
+    'start_date': datetime(2026, 1, 1, tzinfo=local_tz), # 오늘 00:00 KST 기준 (활성화 시 즉시 실행 방지)
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
@@ -32,9 +32,11 @@ with DAG(
     'dbt_daily_flow',
     default_args=default_args,
     description='A daily dbt workflow using Cosmos TaskGroups',
-    schedule_interval=None,
+    schedule_interval='@daily',      # 매일 00:00 KST 실행
+    # schedule_interval='0 0 * * *', # 크론탭 형식: 분 시 일 월 요일 (매일 00:00 실행)
     params=params,
     catchup=False,              # 지침: 과거 누락분 실행 방지
+    max_active_runs=1,              # 지침: 동시에 하나의 실행만 허용
     is_paused_upon_creation=True, # 지침: 활성화 시 자동 실행 방지
     tags=['dbt', 'edu001'],
 ) as dag:

@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS stg.stg_receipts (
-    receipt_id INTEGER,
+    receipt_id INTEGER PRIMARY KEY,
     order_id INTEGER,
     customer_id INTEGER,
     customer_name VARCHAR(255),
