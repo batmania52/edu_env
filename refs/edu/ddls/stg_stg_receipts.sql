@@ -29,3 +29,4 @@ COMMENT ON COLUMN stg.stg_receipts.product_category IS '상품 카테고리';
 COMMENT ON COLUMN stg.stg_receipts.item_quantity IS '상품 수량';
 COMMENT ON COLUMN stg.stg_receipts.item_price IS '개별 상품 가격';
 COMMENT ON COLUMN stg.stg_receipts.item_total IS '개별 상품 총액';
+COMMENT ON COLUMN stg.stg_receipts.dbt_dtm IS 'dbt 적재 일시';

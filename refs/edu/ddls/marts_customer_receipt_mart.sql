@@ -21,3 +21,4 @@ COMMENT ON COLUMN marts.customer_receipt_mart.total_receipt_count IS '고객의 
 COMMENT ON COLUMN marts.customer_receipt_mart.total_items_purchased IS '고객이 구매한 총 상품 수량';
 COMMENT ON COLUMN marts.customer_receipt_mart.total_spend_amount IS '고객의 총 지출 금액';
 COMMENT ON COLUMN marts.customer_receipt_mart.average_item_price IS '고객이 구매한 상품의 평균 가격';
+COMMENT ON COLUMN marts.customer_receipt_mart.dbt_dtm IS 'dbt 적재 일시';

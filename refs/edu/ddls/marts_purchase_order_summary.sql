@@ -23,3 +23,4 @@ COMMENT ON COLUMN marts.purchase_order_summary.completed_orders IS '완료된 �
 COMMENT ON COLUMN marts.purchase_order_summary.canceled_orders IS '취소된 발주 횟수';
 COMMENT ON COLUMN marts.purchase_order_summary.first_purchase_order_date IS '첫 발주 날짜';
 COMMENT ON COLUMN marts.purchase_order_summary.last_purchase_order_date IS '마지막 발주 날짜';
+COMMENT ON COLUMN marts.purchase_order_summary.dbt_dtm IS 'dbt 적재 일시';

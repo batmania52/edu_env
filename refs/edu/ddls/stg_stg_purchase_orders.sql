@@ -15,3 +15,4 @@ COMMENT ON COLUMN stg.stg_purchase_orders.customer_id IS '발주 고객 ID';
 COMMENT ON COLUMN stg.stg_purchase_orders.order_date IS '발주 날짜 및 시간';
 COMMENT ON COLUMN stg.stg_purchase_orders.total_amount IS '발주 총 금액';
 COMMENT ON COLUMN stg.stg_purchase_orders.status IS '발주 상태 (예: pending, completed, canceled)';
+COMMENT ON COLUMN stg.stg_purchase_orders.dbt_dtm IS 'dbt 적재 일시';
