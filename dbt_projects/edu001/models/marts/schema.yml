@@ -232,14 +232,13 @@ models:
     description: dbt 적재 일시
     data_type: timestamp without time zone
 - name: receipt_analysis_mart
-  description: 영수증 데이터를 기반으로 한 상세 판매 분석 마트 모델
+  description: 영수증 데이터 기반 상세 판매 분석 마트
   config:
     materialized: incremental
     incremental_strategy: append
-    unique_key: receipt_id
   columns:
   - name: receipt_id
-    description: 영수증 ID (기본 키)
+    description: 영수증 고유 ID
     data_type: integer
   - name: order_id
     description: 주문 ID
@@ -254,7 +253,7 @@ models:
     description: 고객 이메일
     data_type: character varying(255)
   - name: order_date
-    description: 주문 날짜
+    description: 주문 일시
     data_type: timestamp without time zone
   - name: total_order_amount
     description: 주문 총액
@@ -263,7 +262,7 @@ models:
     description: 상품 ID
     data_type: integer
   - name: product_name
-    description: 상품명
+    description: 상품 이름
     data_type: character varying(255)
   - name: product_category
     description: 상품 카테고리
