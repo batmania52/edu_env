@@ -47,7 +47,7 @@ services:
     networks:
       - airflow_network
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:latest
@@ -111,8 +111,6 @@ services:
       redis:
         condition: service_healthy
 
-volumes:
-  postgres_data:
 
 networks:
   airflow_network:
