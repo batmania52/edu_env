@@ -5,7 +5,9 @@ models:
   config:
     materialized: incremental
     incremental_strategy: append
-    unique_key: customer_id
+    unique_key:
+    - customer_id
+    - analysis_date
   columns:
   - name: customer_id
     description: 고객의 기본 키

@@ -1,5 +1,5 @@
 CREATE TABLE marts.customer_churn_risk_mart (
-    customer_id integer PRIMARY KEY,
+    customer_id integer,
     customer_name varchar(255),
     customer_email varchar(255),
     registration_date date,
@@ -10,7 +10,8 @@ CREATE TABLE marts.customer_churn_risk_mart (
     churn_risk_score numeric(10,2),
     churn_risk_segment varchar(255),
     analysis_date date,
-    dbt_dtm timestamp without time zone
+    dbt_dtm timestamp without time zone,
+    PRIMARY KEY (customer_id, analysis_date)
 );
 
 COMMENT ON TABLE marts.customer_churn_risk_mart IS '고객 이탈 위험 분석 마트 모델';
