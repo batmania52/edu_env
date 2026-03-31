@@ -1,15 +1,4 @@
 {#-
-  [AI_GENERATION_RULES]
-  1. STICKY RIGHT: Align 'from', 'where', 'and', 'join', 'on', 'group by' keywords to the right.
-  2. INDENT=5: Use 5 spaces for indentation based on comma position.
-  3. SELECT_FIRST_LINE: Place the first column on the same line as 'select'.
-  4. JOIN/ON NEWLINE: Always place 'on' on a new line after 'join'.
-  5. NO BLANK LINES IN SQL: Do not include empty lines within the SQL query block.
-  6. LOWERCASE: Use lowercase for all SQL keywords and identifiers.
-  7. UPDATE_HISTORY: Always include the creation and modification history.
--#}
-
-{#-
   [Model Information] - 모델의 메타데이터를 정의하는 섹션
   - Name: <MODEL_NAME> - 생성될 모델의 파일명
   - Developer: hjpark - 담당 개발자명 (기본값: hjpark)
