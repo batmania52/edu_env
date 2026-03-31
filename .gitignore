@@ -6,6 +6,4 @@ airflow/postgres_data/*
 **/__pycache__/
 **/bak/
 **/logs/
-mycodes/.dbt_unified_cache.json
 dbt_projects/edu001/
-.bkit/
