@@ -347,3 +347,44 @@ models:
   - name: dbt_dtm
     description: dbt 적재 일시
     data_type: timestamp without time zone
+- name: orders_churn_mart
+  description: Model for orders_churn_mart in marts schema.
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - order_id
+  columns:
+  - name: order_id
+    description: Column order_id with type integer
+    data_type: integer
+  - name: customer_id
+    description: Column customer_id with type integer
+    data_type: integer
+  - name: customer_name
+    description: Column customer_name with type character varying(255)
+    data_type: character varying(255)
+  - name: order_date
+    description: Column order_date with type timestamp without time zone
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: Column total_amount with type numeric(10,2)
+    data_type: numeric(10,2)
+  - name: churn_risk_score
+    description: Column churn_risk_score with type numeric(10,2)
+    data_type: numeric(10,2)
+  - name: churn_risk_segment
+    description: Column churn_risk_segment with type character varying(255)
+    data_type: character varying(255)
+  - name: days_since_last_order
+    description: Column days_since_last_order with type integer
+    data_type: integer
+  - name: total_orders
+    description: Column total_orders with type bigint
+    data_type: bigint
+  - name: avg_order_value
+    description: Column avg_order_value with type numeric(10,2)
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: Column dbt_dtm with type timestamp without time zone
+    data_type: timestamp without time zone
