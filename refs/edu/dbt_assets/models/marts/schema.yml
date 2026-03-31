@@ -1,0 +1,349 @@
+version: 2
+models:
+- name: customer_churn_risk_mart
+  description: 고객 이탈 위험 분석 마트 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - customer_id
+    - analysis_date
+  columns:
+  - name: customer_id
+    description: 고객의 기본 키
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: registration_date
+    description: 고객 등록일
+    data_type: date
+  - name: last_order_date
+    description: 고객의 마지막 주문 날짜
+    data_type: timestamp without time zone
+  - name: days_since_last_order
+    description: 고객의 마지막 주문 이후 경과일
+    data_type: integer
+  - name: total_orders
+    description: 고객의 총 주문 건수
+    data_type: bigint
+  - name: avg_order_value
+    description: 고객 주문의 평균 가치
+    data_type: numeric(10,2)
+  - name: churn_risk_score
+    description: 계산된 이탈 위험 점수
+    data_type: numeric(10,2)
+  - name: churn_risk_segment
+    description: 이탈 위험 세그먼트 (낮음, 중간, 높음)
+    data_type: character varying(255)
+  - name: analysis_date
+    description: 이탈 위험 분석 수행 날짜
+    data_type: date
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: customer_receipt_mart
+  description: 고객별 영수증 요약 마트 테이블
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: customer_id
+  columns:
+  - name: customer_id
+    description: 고객 ID (기본 키)
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: first_order_date
+    data_type: date
+    description: 고객의 첫 주문 날짜
+  - name: last_order_date
+    data_type: date
+    description: 고객의 마지막 주문 날짜
+  - name: total_receipt_count
+    description: 고객의 총 주문 건수
+    data_type: bigint
+  - name: total_items_purchased
+    description: 고객이 구매한 총 상품 수량
+    data_type: bigint
+  - name: total_spend_amount
+    description: 고객의 총 지출 금액
+    data_type: numeric(18,2)
+  - name: average_item_price
+    description: 고객이 구매한 상품의 평균 가격
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: orders_customers_mart
+  description: 주문 및 고객 데이터 마트 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: order_id
+  columns:
+  - name: order_id
+    description: 주문의 기본 키
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_id
+    description: 고객에 대한 외래 키
+    data_type: integer
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: order_date
+    description: 주문 날짜
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: registration_date
+    description: 고객 등록일
+    data_type: date
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: orders_mart
+  description: 주문 데이터 마트 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
+  columns:
+  - name: order_id
+    description: 주문의 기본 키
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_id
+    description: 고객에 대한 외래 키
+    data_type: integer
+  - name: order_date
+    description: 주문 날짜
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: product_id
+    description: 상품 ID
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: quantity
+    description: 상품 수량
+    data_type: integer
+  - name: price
+    description: 상품 가격
+    data_type: numeric(10,2)
+  - name: item_total
+    description: 항목별 총액
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: orders_products_mart
+  description: 주문, 주문 항목 및 상품 데이터 마트 모델
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
+  columns:
+  - name: order_id
+    description: 주문의 기본 키
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_id
+    description: 고객에 대한 외래 키
+    data_type: integer
+  - name: order_date
+    description: 주문 날짜
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: product_id
+    description: 상품에 대한 외래 키
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: product_name
+    description: 상품 이름
+    data_type: character varying(255)
+  - name: product_category
+    description: 상품 카테고리
+    data_type: character varying(255)
+  - name: item_price
+    description: 주문 항목의 상품 가격
+    data_type: numeric(10,2)
+  - name: product_price
+    description: 상품의 현재 가격
+    data_type: numeric(10,2)
+  - name: quantity
+    description: 주문 항목의 상품 수량
+    data_type: integer
+  - name: product_created_date
+    description: 상품 생성일
+    data_type: date
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: orders_summary_mart
+  description: 주문-고객-상품 통합 요약 마트 (mart 간 리니지 테스트용)
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key:
+    - order_id
+    - product_id
+  columns:
+  - name: order_id
+    description: 주문 ID (복합 PK)
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_id
+    description: 고객 ID
+    data_type: integer
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: registration_date
+    description: 고객 등록일
+    data_type: date
+  - name: order_date
+    description: 주문 날짜
+    data_type: timestamp without time zone
+  - name: total_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: product_id
+    description: 상품 ID (복합 PK)
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: quantity
+    description: 상품 수량
+    data_type: integer
+  - name: price
+    description: 상품 단가
+    data_type: numeric(10,2)
+  - name: item_total
+    description: 상품별 총액
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: purchase_order_summary
+  description: 고객별 발주 요약 정보
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: customer_id
+  columns:
+  - name: customer_id
+    description: 고객 고유 ID
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: total_purchase_orders
+    description: 총 발주 횟수
+    data_type: bigint
+  - name: total_purchase_amount
+    description: 총 발주 금액
+    data_type: numeric(10,2)
+  - name: pending_orders
+    description: 대기 중인 발주 횟수
+    data_type: bigint
+  - name: completed_orders
+    description: 완료된 발주 횟수
+    data_type: bigint
+  - name: canceled_orders
+    description: 취소된 발주 횟수
+    data_type: bigint
+  - name: first_purchase_order_date
+    description: 첫 발주 날짜
+    data_type: timestamp without time zone
+  - name: last_purchase_order_date
+    description: 마지막 발주 날짜
+    data_type: timestamp without time zone
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone
+- name: receipt_analysis_mart
+  description: 영수증 데이터 기반 상세 판매 분석 마트
+  config:
+    materialized: incremental
+    incremental_strategy: append
+    unique_key: receipt_id
+  columns:
+  - name: receipt_id
+    description: 영수증 고유 ID
+    data_type: integer
+    constraints:
+    - type: not_null
+  - name: order_id
+    description: 주문 ID
+    data_type: integer
+  - name: customer_id
+    description: 고객 ID
+    data_type: integer
+  - name: customer_name
+    description: 고객 이름
+    data_type: character varying(255)
+  - name: customer_email
+    description: 고객 이메일
+    data_type: character varying(255)
+  - name: order_date
+    description: 주문 일시
+    data_type: timestamp without time zone
+  - name: total_order_amount
+    description: 주문 총액
+    data_type: numeric(10,2)
+  - name: product_id
+    description: 상품 ID
+    data_type: integer
+  - name: product_name
+    description: 상품 이름
+    data_type: character varying(255)
+  - name: product_category
+    description: 상품 카테고리
+    data_type: character varying(255)
+  - name: item_quantity
+    description: 상품 수량
+    data_type: integer
+  - name: item_price
+    description: 상품 단가
+    data_type: numeric(10,2)
+  - name: item_total
+    description: 상품별 총액
+    data_type: numeric(10,2)
+  - name: dbt_dtm
+    description: dbt 적재 일시
+    data_type: timestamp without time zone

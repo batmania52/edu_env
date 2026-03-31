@@ -1,16 +1,24 @@
 {% macro log_model_start(dbt_invocation_id) %}
   {% if execute %}
-    {% set airflow_run_id = var('airflow_run_id', dbt_invocation_id) %}
     {% set model_name = model.name %}
-    {% set intervals = get_date_intervals() %}
-    {% set data_start = intervals[0] %}
-    {% set data_end = intervals[1] %}
+    {% set data_start = var('data_interval_start', none) %}
+    {% set data_end = var('data_interval_end', none) %}
 
-    {% set variables_json = [
-        {'key':'run_mode', 'value': var('run_mode', 'schedule')},
-        {'key':'data_interval_start', 'value': data_start}, 
-        {'key':'data_interval_end', 'value': data_end}
-    ] | tojson %}
+    {# If data_start or data_end are None, get the default values from get_date_intervals() #}
+    {% if data_start is none or data_end is none %}
+      {% set default_intervals = get_date_intervals() %}
+      {% set default_start = default_intervals[0] %}
+      {% set default_end = default_intervals[1] %}
+
+      {% if data_start is none %}
+        {% set data_start = default_start %}
+      {% endif %}
+      {% if data_end is none %}
+        {% set data_end = default_end %}
+      {% endif %}
+    {% endif %}
+
+    {% set variables_json = {'data_interval_start': data_start, 'data_interval_end': data_end} | tojson %}
 
     {% set insert_sql %}
       INSERT INTO admin.dbt_log (
@@ -18,15 +26,14 @@
         model_name,
         status,
         start_time,
-        variables,
-        airflow_run_id
+        variables
       ) VALUES (
         '{{ dbt_invocation_id }}',
         '{{ model_name }}',
         'running',
         statement_timestamp() at time zone 'Asia/Seoul',
-        '{{ variables_json }}',
-        '{{ airflow_run_id }}'
+        
+        '{{ variables_json }}'
       );
     {% endset %}
     

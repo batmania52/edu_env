@@ -7,4 +7,5 @@ airflow/postgres_data/*
 **/bak/
 **/logs/
 mycodes/.dbt_unified_cache.json
+dbt_projects/edu001/
 .bkit/

@@ -1,45 +1,28 @@
 {% macro get_date_intervals() %}
-  {# 1. 파라미터 가져오기 (기본값 설정) #}
-  {% set run_mode = var('run_mode', 'schedule') %}
   {% set start_date_var = var('data_interval_start', none) %}
   {% set end_date_var = var('data_interval_end', none) %}
 
-  {# 디버깅 로그: dbt 실행 로그에서 확인 가능 #}
-  {% do log("DEBUG: Received run_mode = " ~ run_mode, info=True) %}
-  {% do log("DEBUG: Received start_date_var = " ~ start_date_var, info=True) %}
-
-  {# 현재 시각 기준 (fallback용) #}
   {% set current_run_date = modules.datetime.datetime.strptime(run_started_at.strftime('%Y-%m-%d'), '%Y-%m-%d') %}
 
-  {% set start_dt = none %}
-  {% set end_dt = none %}
+  {% set start_datetime = none %}
+  {% set end_datetime = none %}
 
-  {# 문자열 -> datetime 객체 변환 #}
-  {% if start_date_var and start_date_var != "" %}
-    {% set start_dt = modules.datetime.datetime.strptime(start_date_var, '%Y-%m-%d %H:%M:%S') %}
+  {# Parse start_date_var #}
+  {% if start_date_var is none %}
+    {% set start_datetime = (current_run_date - modules.datetime.timedelta(days=4)) %}
   {% else %}
-    {% set start_dt = current_run_date %}
+    {# auditor.py always passes YYYY-MM-DD HH:MM:SS format #}
+    {% set start_datetime = modules.datetime.datetime.strptime(start_date_var, '%Y-%m-%d %H:%M:%S') %}
   {% endif %}
 
-  {% if end_date_var and end_date_var != "" %}
-    {% set end_dt = modules.datetime.datetime.strptime(end_date_var, '%Y-%m-%d %H:%M:%S') %}
+  {# Parse end_date_var #}
+  {% if end_date_var is none %}
+    {# Default end_date is the start of the current day (run_started_at's day) #}
+    {% set end_datetime = current_run_date %}
   {% else %}
-    {% set end_dt = current_run_date %}
+    {# auditor.py always passes YYYY-MM-DD HH:MM:SS format, and it's already the exclusive end #}
+    {% set end_datetime = modules.datetime.datetime.strptime(end_date_var, '%Y-%m-%d %H:%M:%S') %}
   {% endif %}
 
-  {# 2. 날짜 가공 로직 (문자열 비교 시 공백 제거) #}
-  {% if run_mode|trim == 'schedule' %}
-    {% do log("DEBUG: Applying schedule logic (-3d, -1d)", info=True) %}
-    {% set start_dt = (start_dt - modules.datetime.timedelta(days=3)) %}
-    {% set end_dt = (end_dt - modules.datetime.timedelta(days=1)) %}
-  {% else %}
-    {% do log("DEBUG: Applying manual logic (no change)", info=True) %}
-  {% endif %}
-
-  {% set final_start = start_dt.strftime('%Y-%m-%d %H:%M:%S') %}
-  {% set final_end = end_dt.strftime('%Y-%m-%d %H:%M:%S') %}
-
-  {% do log("DEBUG: Final Intervals -> " ~ final_start ~ " to " ~ final_end, info=True) %}
-
-  {{ return([final_start, final_end]) }}
+  {{ return([start_datetime.strftime('%Y-%m-%d %H:%M:%S'), end_datetime.strftime('%Y-%m-%d %H:%M:%S')]) }}
 {% endmacro %}
