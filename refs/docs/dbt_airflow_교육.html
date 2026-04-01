@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>dbt + Airflow 실습 교육 - Full Course (44 Slides)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        /* PDF 인쇄 및 브라우저 보기 최적화 */
+        @media print {
+            body { background: none; padding: 0; margin: 0; overflow: visible !important; }
+            .slide-container { display: flex !important; page-break-after: always; box-shadow: none; border-radius: 0; border: none; margin: 0; }
+            .nav-hint { display: none; }
+        }
+
+        * { box-sizing: border-box; }
+        body { 
+            background-color: #0b0f1a; 
+            margin: 0; 
+            padding: 0;
+            font-family: 'Noto Sans KR', sans-serif; 
+            overflow: hidden; 
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .slide-container {
+            display: none; 
+            width: 1280px; 
+            height: 720px;
+            background-color: #0f172a; 
+            color: #f8fafc;
+            position: relative; 
+            overflow: hidden;
+            flex-direction: column;
+            padding: 40px 60px; /* 여백 소폭 축소로 콘텐츠 확보 */
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            flex-shrink: 0;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .slide-container.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .slide-container::before {
+            content: ''; position: absolute; top: -10%; right: -5%; width: 45%; height: 45%;
+            background: radial-gradient(circle, rgba(16, 185, 129, 0.06) 0%, transparent 70%);
+            z-index: 0;
+        }
+
+        h1 { font-family: 'Space Grotesk', sans-serif; font-size: 72px; color: #f8fafc; line-height: 1.1; margin: 0; }
+        .slide-title { font-family: 'Space Grotesk', sans-serif; font-size: 42px; color: #10b981; font-weight: 700; margin-bottom: 25px; border-left: 10px solid #10b981; padding-left: 25px; width: 100%; text-align: left; z-index: 1; }
+        h3 { font-size: 28px; color: #34d399; margin: 15px 0 10px 0; font-weight: 700; }
+
+        /* 콘텐츠 영역 스크롤 및 레이아웃 수정 */
+        .content-area { 
+            flex-grow: 1; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: flex-start; 
+            z-index: 1; 
+            width: 100%; 
+            overflow-y: auto; /* 내용이 많을 경우 스크롤 허용 */
+            padding-right: 10px;
+        }
+        
+        /* 커스텀 스크롤바 */
+        .content-area::-webkit-scrollbar { width: 6px; }
+        .content-area::-webkit-scrollbar-thumb { background: rgba(16, 185, 129, 0.3); border-radius: 10px; }
+
+        .code-block {
+            background: #011627; padding: 20px; border-radius: 10px;
+            font-family: 'JetBrains Mono', monospace; font-size: 14px;
+            color: #d1d5db; line-height: 1.5; border: 1px solid rgba(16, 185, 129, 0.2);
+            white-space: pre; overflow-x: auto; margin: 10px 0; width: 100%;
+            flex-shrink: 0;
+        }
+        .cm { color: #637777; font-style: italic; }
+        .cy { color: #ecc48d; }
+        .cg { color: #7ee787; }
+
+        .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 30px; width: 100%; align-items: start; flex-shrink: 0; }
+        .tile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; width: 100%; flex-shrink: 0; }
+        .tile { background: #1e293b; padding: 20px; border-radius: 15px; border: 1px solid rgba(255,255,255,0.05); height: 100%; }
+
+        table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 10px; overflow: hidden; margin-top: 15px; flex-shrink: 0; }
+        th { background: #334155; color: #10b981; text-align: left; padding: 15px 20px; font-size: 16px; }
+        td { padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,0.05); color: #cbd5e1; font-size: 16px; }
+
+        .bullet-list { list-style: none; padding: 0; margin-top: 10px; }
+        .bullet-list li { position: relative; padding-left: 35px; margin-bottom: 15px; font-size: 18px; line-height: 1.5; color: #94a3b8; }
+        .bullet-list li i { position: absolute; left: 0; top: 4px; color: #10b981; font-size: 20px; }
+
+        .note { background: rgba(56, 189, 248, 0.05); border-left: 6px solid #38bdf8; padding: 15px 20px; border-radius: 0 8px 8px 0; margin-top: 20px; color: #38bdf8; font-weight: 700; font-size: 17px; flex-shrink: 0; }
+        .note-g { background: rgba(16, 185, 129, 0.05); border-left-color: #10b981; color: #10b981; }
+
+        .img-box { 
+            border-radius: 15px; 
+            overflow: hidden; 
+            border: 2px dashed rgba(16, 212, 191, 0.2); 
+            height: 300px; 
+            width: 100%; 
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #94a3b8;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .img-box i { font-size: 80px; color: #10b981; opacity: 0.8; margin-bottom: 15px; }
+
+        .slide-num { position: absolute; bottom: 30px; right: 50px; font-family: 'Space Grotesk'; font-size: 14px; color: #475569; font-weight: 500; }
+        .tag { position: absolute; top: 30px; right: 50px; background: #1e293b; padding: 6px 15px; border-radius: 6px; font-size: 12px; color: #10b981; font-weight: 700; border: 1px solid #10b981; }
+
+        .nav-hint {
+            position: fixed;
+            bottom: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #475569;
+            font-size: 11px;
+            background: rgba(15, 23, 42, 0.9);
+            padding: 4px 12px;
+            border-radius: 20px;
+            pointer-events: none;
+            z-index: 100;
+        }
+
+        .section-center { align-items: center; justify-content: center; text-align: center; height: 100%; }
+        .section-center hr { width: 120px; border: 3px solid #10b981; margin: 30px auto; border-radius: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="nav-hint">방향키(←, →) 또는 Space로 페이지 이동</div>
+
+<!-- SLIDE 1: MAIN COVER -->
+<div class="slide-container active" id="slide1">
+    <div class="content-area section-center">
+        <div style="font-family: 'Space Grotesk'; font-weight: 700; letter-spacing: 12px; color: #34d399; margin-bottom: 30px;">HANDS-ON WORKSHOP</div>
+        <h1>dbt + Airflow<br>실습 교육</h1>
+        <p style="font-size: 32px; color: #94a3b8; margin-top: 30px;">데이터 파이프라인 구축부터 자동화까지의 전 과정</p>
+        <div style="display: flex; gap: 20px; margin-top: 50px;">
+            <div style="padding: 10px 30px; border: 2px solid #10b981; border-radius: 50px; color: #10b981; font-weight: 700;">환경 구성</div>
+            <div style="padding: 10px 30px; border: 2px solid #10b981; border-radius: 50px; color: #10b981; font-weight: 700;">dbt</div>
+            <div style="padding: 10px 30px; border: 2px solid #10b981; border-radius: 50px; color: #10b981; font-weight: 700;">Airflow</div>
+        </div>
+    </div>
+    <div class="slide-num">01 / 44</div>
+</div>
+
+<!-- SLIDE 2: Goals -->
+<div class="slide-container" id="slide2">
+    <div class="tag">Part 1. 환경 구성</div>
+    <h2 class="slide-title">오늘 만들 실습 환경</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div style="display: flex; flex-direction: column; gap: 20px;">
+                <div class="tile">
+                    <h3>인프라 레이어</h3>
+                    <div style="font-family: 'JetBrains Mono'; color: #10b981; line-height: 1.8; font-size: 18px;">Docker 컨테이너<br>├── PostgreSQL (Data Warehouse)<br>└── Airflow (Orchestrator)</div>
+                </div>
+                <div class="tile">
+                    <h3>애플리케이션 레이어</h3>
+                    <div style="font-family: 'JetBrains Mono'; color: #38bdf8; line-height: 1.8; font-size: 18px;">Python venv_dbt<br>└── dbt 프로젝트 (edu001)</div>
+                </div>
+            </div>
+            <div class="img-box">
+                <i class="fa-solid fa-server"></i>
+                <p>Infrastructure Diagram</p>
+            </div>
+        </div>
+        <div class="note">Docker 컨테이너를 사용하여 OS와 관계없이 일관된 분석 환경을 제공합니다.</div>
+    </div>
+    <div class="slide-num">02 / 44</div>
+</div>
+
+<!-- SLIDE 3: Docker Startup -->
+<div class="slide-container" id="slide3">
+    <h2 class="slide-title">1단계: Docker 컨테이너 실행</h2>
+    <div class="content-area">
+        <p style="font-size: 18px; color: #94a3b8; margin-bottom: 10px;">Airflow와 PostgreSQL을 구동하기 위한 초기화 과정입니다.</p>
+        <div class="two-column">
+            <div>
+                <h3>설정 및 가동</h3>
+                <div class="code-block"><span class="cm"># 설정 파일 복사 및 권한 설정</span>
+cp refs/edu/docker_setup/* airflow/
+. airflow_init.sh
+
+<span class="cm"># 컨테이너 실행</span>
+cd airflow
+docker-compose down -v
+docker-compose up -d --build</div>
+                <p style="font-size: 15px; color: #64748b; margin-top: 10px;">• <code>airflow_init.sh</code>: 폴더 권한 및 계정 초기화<br>• <code>-v</code>: 기존 데이터 볼륨을 삭제하여 깨끗한 상태로 시작</p>
+            </div>
+            <div>
+                <h3>서비스 상태 확인</h3>
+                <div class="code-block"><span class="cm"># 아래 5개 서비스가 'Up' 인지 확인</span>
+docker ps
+
+<span class="cg">airflow-webserver (UI)</span>
+<span class="cg">airflow-scheduler (Logic)</span>
+<span class="cg">airflow-worker (Job)</span>
+<span class="cg">redis (Queue)</span>
+<span class="cg">postgres (Meta DB)</span></div>
+                <div class="note-g" style="margin-top: 10px;">Web UI: http://localhost:8081</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">03 / 44</div>
+</div>
+
+<!-- SLIDE 4: Python Venv -->
+<div class="slide-container" id="slide4">
+    <h2 class="slide-title">2단계: Python 가상환경 설정</h2>
+    <div class="content-area">
+        <p style="font-size: 18px; color: #94a3b8; margin-bottom: 15px;">dbt 모델 개발을 위해 독립된 Python 라이브러리 환경을 구축합니다.</p>
+        <div class="two-column">
+            <div>
+                <div class="code-block" style="font-size: 15px;"><span class="cm"># 1. dbt 전용 가상환경 생성</span>
+python3.11 -m venv venv_dbt
+
+<span class="cm"># 2. 가상환경 활성화</span>
+source venv_dbt/bin/activate
+
+<span class="cm"># 3. dbt-postgres 및 cosmos 설치</span>
+pip install -r refs/edu/requirements.txt</div>
+            </div>
+            <div class="tile">
+                <h3>설치 패키지 주요 항목</h3>
+                <ul class="bullet-list" style="font-size: 16px;">
+                    <li><strong>dbt-postgres:</strong> PostgreSQL 연동 어댑터</li>
+                    <li><strong>astronomer-cosmos:</strong> dbt-Airflow 통합 도구</li>
+                    <li><strong>pydantic:</strong> 데이터 유효성 검사</li>
+                </ul>
+                <div class="note" style="border-left-color: #facc15; background: rgba(250, 204, 21, 0.05); color: #facc15;">주의: 터미널 창을 새로 열면 다시 <code>activate</code> 해야 합니다.</div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">04 / 44</div>
+</div>
+
+<!-- SLIDE 5: DB Init -->
+<div class="slide-container" id="slide5">
+    <h2 class="slide-title">3단계: 데이터베이스 초기화</h2>
+    <div class="content-area">
+        <div class="code-block" style="font-size: 20px; text-align: center; color: #10b981;">. set_environments.sh</div>
+        <p style="font-size: 18px; color: #94a3b8; margin-top: 15px;">이 스크립트는 실습에 필요한 물리적 DB 구조를 미리 준비합니다.</p>
+        <table>
+            <thead>
+                <tr><th width="30%">생성 항목</th><th>설명</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>edu 스키마</strong></td><td>원본 데이터(Raw Data) 적재 위치. 실습용 CSV가 임포트됨.</td></tr>
+                <tr><td><strong>stg 스키마</strong></td><td>1단계 변환(Staging) 모델이 위치할 곳.</td></tr>
+                <tr><td><strong>marts 스키마</strong></td><td>최종 분석용(Mart) 모델이 위치할 곳.</td></tr>
+                <tr><td><strong>admin.dbt_log</strong></td><td>빌드 모니터링을 위한 이력 관리 테이블.</td></tr>
+            </tbody>
+        </table>
+        <div class="note"><strong>왜 스키마를 나누나요?</strong> 데이터 가공 단계(Raw -> Stg -> Mart)를 물리적으로 분리하여 관리 효율성을 높이기 위함입니다.</div>
+    </div>
+    <div class="slide-num">05 / 44</div>
+</div>
+
+<!-- SLIDE 6: dbt Init -->
+<div class="slide-container" id="slide6">
+    <h2 class="slide-title">4단계: dbt 프로젝트 생성</h2>
+    <div class="content-area">
+        <p style="font-size: 18px; color: #94a3b8; margin-bottom: 10px;">dbt 작업을 위한 기본 디렉토리 구조와 접속 정보를 설정합니다.</p>
+        <div class="code-block" style="font-size: 14px;"><span class="cm"># 1. 프로젝트 폴더 초기화</span>
+cd dbt_projects
+dbt init edu001 --skip-profile-setup
+cd ..
+
+<span class="cm"># 2. 불필요한 샘플 모델 제거</span>
+rm -rf dbt_projects/edu001/models/example
+
+<span class="cm"># 3. DB 접속 프로파일 설정</span>
+mkdir -p dbt_projects/edu001/.dbt
+cp refs/edu/profiles.yml.template dbt_projects/edu001/.dbt/profiles.yml</div>
+        <div class="tile" style="margin-top: 15px;">
+            <p style="font-size: 16px;"><strong>profiles.yml의 역할:</strong> 소스코드(SQL)와 별개로, 실제 데이터베이스의 호스트, 포트, 인증 정보를 관리하는 보안 설정 파일입니다.</p>
+        </div>
+    </div>
+    <div class="slide-num">06 / 44</div>
+</div>
+
+<!-- SLIDE 7: Part 1 Checklist -->
+<div class="slide-container" id="slide7">
+    <h2 class="slide-title">Part 1 완료 체크리스트</h2>
+    <div class="content-area">
+        <div class="tile-grid">
+            <div class="tile">
+                <ul class="bullet-list">
+                    <li><i class="fa-solid fa-square-check"></i> Docker 5개 서비스 정상 가동</li>
+                    <li><i class="fa-solid fa-square-check"></i> Airflow Web UI 로그인 성공</li>
+                    <li><i class="fa-solid fa-square-check"></i> (venv_dbt) 가상환경 활성화</li>
+                </ul>
+            </div>
+            <div class="tile">
+                <ul class="bullet-list">
+                    <li><i class="fa-solid fa-square-check"></i> DB 내 edu, stg, marts 스키마 생성</li>
+                    <li><i class="fa-solid fa-square-check"></i> <code>dbt debug</code> 명령 시 All Passed 확인</li>
+                </ul>
+            </div>
+        </div>
+        <div class="code-block" style="margin-top: 20px; text-align: center;">cd dbt_projects/edu001 && dbt debug --profiles-dir .dbt</div>
+    </div>
+    <div class="slide-num">07 / 44</div>
+</div>
+
+<!-- SLIDE 8: Section 2 Start -->
+<div class="slide-container section-center" id="slide8">
+    <hr>
+    <div style="font-family: 'Space Grotesk'; font-size: 28px; color: #10b981; letter-spacing: 4px;">TRANSFORMATION LAYER</div>
+    <h1>Part 2. dbt</h1>
+    <p style="font-size: 24px; color: #94a3b8; margin-top: 20px;">SQL을 이용한 데이터 가공 및 모델링 실습</p>
+    <div class="slide-num">08 / 44</div>
+</div>
+
+<!-- SLIDE 9: ETL vs ELT -->
+<div class="slide-container" id="slide9">
+    <h2 class="slide-title">dbt란? ETL vs ELT</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="tile" style="text-align: center;">
+                <h3 style="color: #94a3b8;">기존 (ETL)</h3>
+                <p style="font-size: 16px;">데이터가 DB로 들어가기 전에 외부 엔진에서 변환합니다.</p>
+                <div class="img-box" style="height: 180px; margin-top: 20px;">
+                    <i class="fa-solid fa-right-left" style="font-size: 60px;"></i>
+                    <p>Extract -> Transform -> Load</p>
+                </div>
+            </div>
+            <div class="tile" style="border-color: #10b981; background: rgba(16, 185, 129, 0.05); text-align: center;">
+                <h3 style="color: #10b981;">현대적 (ELT)</h3>
+                <p style="font-size: 16px;">데이터를 먼저 적재하고 DB의 성능을 활용해 변환합니다.</p>
+                <div class="img-box" style="height: 180px; margin-top: 20px;">
+                    <i class="fa-solid fa-bolt-lightning" style="font-size: 60px;"></i>
+                    <p>Extract -> Load -> Transform</p>
+                </div>
+            </div>
+        </div>
+        <div class="note">dbt는 <strong>SQL</strong>만 알면 누구나 고성능 데이터 엔지니어링을 할 수 있게 해줍니다.</div>
+    </div>
+    <div class="slide-num">09 / 44</div>
+</div>
+
+<!-- SLIDE 10: Components -->
+<div class="slide-container" id="slide10">
+    <h2 class="slide-title">dbt 핵심 구성 요소</h2>
+    <div class="content-area">
+        <div class="tile-grid">
+            <div class="tile">
+                <i class="fa-solid fa-code icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Models</h3>
+                <p style="font-size: 15px;">SQL SELECT 문으로 작성된 변환 로직</p>
+            </div>
+            <div class="tile">
+                <i class="fa-solid fa-database icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Sources</h3>
+                <p style="font-size: 15px;">원본 테이블 정의 및 계보 추적</p>
+            </div>
+            <div class="tile">
+                <i class="fa-solid fa-vial icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Tests</h3>
+                <p style="font-size: 15px;">데이터 중복, NULL 값 자동 검증</p>
+            </div>
+        </div>
+        <div class="tile-grid" style="margin-top: 20px;">
+            <div class="tile">
+                <i class="fa-solid fa-diagram-project icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Lineage</h3>
+                <p style="font-size: 15px;">모델 간의 상호 의존성 시각화</p>
+            </div>
+            <div class="tile">
+                <i class="fa-solid fa-bolt icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Macros</h3>
+                <p style="font-size: 15px;">재사용 가능한 Jinja 기반 SQL 함수</p>
+            </div>
+            <div class="tile">
+                <i class="fa-solid fa-book icon" style="font-size: 30px; color: #10b981; margin-bottom: 10px;"></i>
+                <h3>Docs</h3>
+                <p style="font-size: 15px;">자동 생성되는 데이터 카탈로그</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">10 / 44</div>
+</div>
+
+<!-- SLIDE 11: Materialization -->
+<div class="slide-container" id="slide11">
+    <h2 class="slide-title">Materialization 빌드 전략</h2>
+    <div class="content-area">
+        <p style="font-size: 18px; color: #94a3b8; margin-bottom: 15px;">SQL 결과물을 DB에 어떻게 물리적으로 저장할지 결정합니다.</p>
+        <div class="tile-grid">
+            <div class="tile">
+                <h3>view</h3>
+                <p style="font-size: 15px;">항상 최신 데이터.<br>조회 시마다 SQL 실행.</p>
+            </div>
+            <div class="tile">
+                <h3>table</h3>
+                <p style="font-size: 15px;">물리적 테이블로 저장.<br>빠른 조회, 전체 재생성.</p>
+            </div>
+            <div class="tile" style="border: 2px solid #10b981;">
+                <h3>incremental</h3>
+                <p style="font-size: 15px;"><strong>변경된 데이터만 추가.</strong><br>빌드 속도 매우 빠름.</p>
+            </div>
+            <div class="tile">
+                <h3>ephemeral</h3>
+                <p style="font-size: 15px;">DB에 저장 안 함.<br>CTE(임시)로만 활용.</p>
+            </div>
+        </div>
+        <div class="note">본 실습은 <strong>incremental + append</strong> 전략으로 대용량 처리 기법을 배웁니다.</div>
+    </div>
+    <div class="slide-num">11 / 44</div>
+</div>
+
+<!-- SLIDE 12: Jinja Intro -->
+<div class="slide-container" id="slide12">
+    <h2 class="slide-title">Jinja 템플릿 & ref() 함수</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <h3>Jinja: 동적 SQL 작성</h3>
+                <div class="code-block" style="font-size: 14px;"><span class="cm">{# Jinja를 통한 조건문 처리 #}</span>
+<span class="cy">{% if</span> is_incremental() <span class="cy">%}</span>
+  AND date > (SELECT MAX(date) FROM <span class="cy">{{ this }}</span>)
+<span class="cy">{% endif %}</span></div>
+                <p style="font-size: 15px; color: #94a3b8; margin-top: 10px;">• <code>is_incremental()</code>: 증분 빌드 모드인지 판단<br>• <code>{{ this }}</code>: 자기 자신 테이블 참조</p>
+            </div>
+            <div>
+                <h3>ref(): 의존성 선언</h3>
+                <div class="code-block" style="font-size: 14px;"><span class="cm"># 상위 모델을 참조할 때 사용</span>
+FROM <span class="cg">{{ ref('stg_customers') }}</span></div>
+                <p style="font-size: 15px; color: #94a3b8; margin-top: 10px;">• 하드코딩된 테이블 이름 대신 사용<br>• dbt가 자동으로 빌드 순서 조율<br>• 환경(dev/prod)에 따라 스키마 자동 매핑</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">12 / 44</div>
+</div>
+
+<!-- SLIDE 13: Hooks -->
+<div class="slide-container" id="slide13">
+    <h2 class="slide-title">dbt Hooks: 실행 제어</h2>
+    <div class="content-area">
+        <table>
+            <thead>
+                <tr><th width="25%">Hook 명칭</th><th>실행 시점 및 목적</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>on_run_start</strong></td><td>전체 빌드 시작 전 1회 실행. 로그 초기화 등.</td></tr>
+                <tr><td><strong>on_run_end</strong></td><td>전체 빌드 완료 후 1회 실행. 임시 테이블 정리 등.</td></tr>
+                <tr><td><strong>pre-hook</strong></td><td><strong>개별 모델</strong> 빌드 전 실행. 시작 로그 기록.</td></tr>
+                <tr><td><strong>post-hook</strong></td><td><strong>개별 모델</strong> 빌드 후 실행. 권한(Grant) 부여 등.</td></tr>
+            </tbody>
+        </table>
+        <div class="note-g">우리는 <strong>pre-hook</strong>을 사용하여 빌드 현황을 DB에 실시간으로 남깁니다.</div>
+    </div>
+    <div class="slide-num">13 / 44</div>
+</div>
+
+<!-- SLIDE 14: project.yml config -->
+<div class="slide-container" id="slide14">
+    <h2 class="slide-title">dbt_project.yml: 계층적 설정</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 10px;">모델별 저장 방식과 스키마를 폴더 단위로 일괄 지정합니다.</p>
+        <div class="two-column">
+            <div class="code-block" style="font-size: 12px; max-height: 400px;"><span class="cm"># dbt_project.yml 핵심 내용</span>
+models:
+  edu001:
+    +pre-hook: "{{ log_model_start() }}"
+    stg:
+      +materialized: incremental
+      +schema: stg
+      +tags: ["stg"]
+    marts:
+      +schema: marts
+      +tags: ["marts"]</div>
+            <div class="tile">
+                <h3>설정의 핵심</h3>
+                <ul class="bullet-list" style="font-size: 15px;">
+                    <li><strong>+tags:</strong> 실행 시 <code>--select tag:stg</code>로 특정 레이어만 구동 가능</li>
+                    <li><strong>+schema:</strong> dbt가 자동으로 <code>stg_</code> 접두어를 붙여 스키마를 생성</li>
+                    <li><strong>+pre-hook:</strong> 모든 모델 실행 전 로그 매크로 호출</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">14 / 44</div>
+</div>
+
+<!-- SLIDE 15: schema.yml 역할 -->
+<div class="slide-container" id="slide15">
+    <h2 class="slide-title">schema.yml: 데이터 품질 계약</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 10px;">모델의 문서화와 검증 규칙(Test)을 정의합니다.</p>
+        <div class="two-column">
+            <div>
+                <ul class="bullet-list" style="font-size: 16px;">
+                    <li><strong>Metadata:</strong> 컬럼 설명 및 타입 명시</li>
+                    <li><strong>Tests:</strong> <code>unique</code>, <code>not_null</code> 등 선언적 검사</li>
+                    <li><strong>Contract:</strong> 빌드된 테이블 구조가 정의와 다르면 오류 발생</li>
+                </ul>
+            </div>
+            <div class="code-block" style="font-size: 13px;"><span class="cm"># schema.yml 예시</span>
+models:
+  - name: stg_customers
+    columns:
+      - name: customer_id
+        tests:
+          - unique
+          - not_null</div>
+        </div>
+    </div>
+    <div class="slide-num">15 / 44</div>
+</div>
+
+<!-- SLIDE 16: Practice Intro -->
+<div class="slide-container" id="slide16">
+    <h2 class="slide-title">schema.yml 직접 작성 실습</h2>
+    <div class="content-area">
+        <div class="tile-grid">
+            <div class="tile">
+                <h3>실습 가이드</h3>
+                <p style="font-size: 15px;">1. <code>models/stg/schema.yml</code> 파일을 생성합니다.<br>2. <code>stg_customers</code> 모델의 명세를 수동으로 입력해 봅니다.<br>3. 들여쓰기(YAML 문법)에 주의하세요.</p>
+            </div>
+            <div class="tile" style="border: 2px solid #ef4444; background: rgba(239, 68, 68, 0.05);">
+                <h3>수동 작성의 위험성</h3>
+                <p style="font-size: 15px;">컬럼이 100개라면? 사람이 수동으로 적으면 반드시 오타가 발생하고 유지보수가 불가능해집니다.</p>
+            </div>
+        </div>
+        <div class="note">따라서 우리는 자동화 도구(Generator)를 사용합니다.</div>
+    </div>
+    <div class="slide-num">16 / 44</div>
+</div>
+
+<!-- SLIDE 17: Auto-gen -->
+<div class="slide-container" id="slide17">
+    <h2 class="slide-title">schema.yml 자동 생성 도구</h2>
+    <div class="content-area">
+        <p style="font-size: 17px; color: #94a3b8; margin-bottom: 10px;">DB 메타데이터를 읽어 YAML 파일을 자동으로 업데이트하는 스크립트를 사용합니다.</p>
+        <div class="code-block" style="font-size: 13px;"><span class="cm"># 스크립트 실행 (STG 레이어 대상)</span>
+python refs/edu/tools/update_schema_yml.py \
+  --schema stg \
+  --tables stg_customers,stg_order_items,stg_orders \
+  --schema_file_path dbt_projects/edu001/models/stg/schema.yml \
+  --db_key postgres_default</div>
+        <p style="font-size: 15px; color: #64748b; margin-top: 10px;">• <code>--db_key</code>: <code>dbconf.json</code>에 정의된 DB 접속 정보 사용<br>• 실행 후 <code>models/stg/schema.yml</code>이 생성되었는지 확인하세요.</p>
+    </div>
+    <div class="slide-num">17 / 44</div>
+</div>
+
+<!-- SLIDE 18: Staging Layer -->
+<div class="slide-container" id="slide18">
+    <h2 class="slide-title">Staging 모델 설계 원칙</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="bullet-list">
+                <li><i class="fa-solid fa-arrow-right-long"></i> <strong>1:1 매핑:</strong> 원본 테이블 하나당 모델 하나</li>
+                <li><i class="fa-solid fa-check"></i> <strong>타입 변환:</strong> 숫자를 날짜나 문자열로 캐스팅</li>
+                <li><i class="fa-solid fa-tag"></i> <strong>명칭 표준화:</strong> <code>id</code> -> <code>customer_id</code></li>
+                <li><i class="fa-solid fa-ban"></i> <strong>JOIN 금지:</strong> 비즈니스 로직은 Mart에서 수행</li>
+            </div>
+            <div class="img-box" style="height: 250px;">
+                <i class="fa-solid fa-arrows-spin" style="font-size: 50px;"></i>
+                <p>Data Normalization Step</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">18 / 44</div>
+</div>
+
+<!-- SLIDE 19: Staging Practice -->
+<div class="slide-container" id="slide19">
+    <h2 class="slide-title">Staging 모델 작성 (Full Code)</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 5px;">증분 빌드를 위한 Idempotency(멱등성) 확보 로직이 포함된 코드입니다.</p>
+        <div class="code-block" style="font-size: 13px; height: 350px; overflow-y: auto;">{%- set start, end = get_date_intervals() -%}
+
+<span class="cm">{# 1. 기존 데이터 삭제 (중복 방지) #}</span>
+{%- set before_sql -%}
+delete from {{ this }} where registration_date >= '{{ start }}'::date
+  and registration_date < '{{ end }}'::date
+{%- endset -%}
+{%- do run_query(before_sql) if execute -%}
+
+<span class="cm">{# 2. 신규 데이터 선택 #}</span>
+select id               as customer_id
+     , first_name, last_name, email, registration_date
+  from {{ source('edu', 'edu_raw_customers') }}
+ where registration_date >= '{{ start }}'::date
+   and registration_date < '{{ end }}'::date</div>
+        <p style="font-size: 14px; color: #64748b; margin-top: 5px;">• <code>get_date_intervals()</code>: Airflow나 CLI에서 전달받은 기간을 반환하는 커스텀 매크로</p>
+    </div>
+    <div class="slide-num">19 / 44</div>
+</div>
+
+<!-- SLIDE 20: Mart Layer -->
+<div class="slide-container" id="slide20">
+    <h2 class="slide-title">Mart 모델 설계 원칙</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <ul class="bullet-list">
+                    <li><i class="fa-solid fa-chart-pie"></i> <strong>비즈니스 통합:</strong> 여러 Staging 모델을 JOIN</li>
+                    <li><i class="fa-solid fa-filter"></i> <strong>필터링:</strong> 분석 대상 데이터만 선별</li>
+                    <li><i class="fa-solid fa-calculator"></i> <strong>지표화:</strong> 합계, 평균 등 집계 데이터 생성</li>
+                </ul>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>비교</th><th>Staging</th><th>Mart</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>참조</td><td>Source()</td><td>Ref()</td></tr>
+                    <tr><td>주체</td><td>엔지니어</td><td>분석가</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <div class="slide-num">20 / 44</div>
+</div>
+
+<!-- SLIDE 21: Mart Practice -->
+<div class="slide-container" id="slide21">
+    <h2 class="slide-title">Mart 모델 작성 (Full Code)</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 5px;">주문 데이터와 고객 데이터를 결합하여 마케팅 분석용 테이블을 만듭니다.</p>
+        <div class="code-block" style="font-size: 13px; height: 350px; overflow-y: auto;">{%- set start, end = get_date_intervals() -%}
+{%- set before_sql -%}
+delete from {{ this }} where order_date >= '{{ start }}'::date
+  and order_date < '{{ end }}'::date
+{%- endset -%}
+{%- do run_query(before_sql) if execute -%}
+
+select o.order_id, o.customer_id, c.first_name, o.order_date, o.total_amount
+  from {{ ref('stg_orders') }} as o
+  join {{ ref('stg_customers') }} as c
+    on o.customer_id = c.customer_id
+ where o.order_date >= '{{ start }}'::date</div>
+        <p style="font-size: 14px; color: #64748b; margin-top: 5px;">• <code>ref('stg_orders')</code>: dbt가 자동으로 고객 정보보다 주문 정보를 먼저 빌드하게 함</p>
+    </div>
+    <div class="slide-num">21 / 44</div>
+</div>
+
+<!-- SLIDE 22: Execution -->
+<div class="slide-container" id="slide22">
+    <h2 class="slide-title">dbt run: 모델 실제 구동</h2>
+    <div class="content-area">
+        <p style="font-size: 17px; color: #94a3b8; margin-bottom: 10px;">터미널에서 수동으로 모델을 빌드하여 결과를 확인합니다.</p>
+        <div class="code-block" style="font-size: 15px;">cd dbt_projects/edu001
+dbt run \
+  --profiles-dir .dbt \
+  -t dev \
+  --vars '{"run_mode": "manual", 
+           "data_interval_start": "2026-01-01 00:00:00", 
+           "data_interval_end": "2026-01-02 00:00:00"}'</div>
+        <div class="tile" style="margin-top: 15px;">
+            <p style="font-size: 15px;">• <code>-t dev</code>: 개발용 DB 접속 정보 활성화<br>• <code>--vars</code>: SQL 코드 안의 <code>{{ var(...) }}</code>에 값을 전달</p>
+        </div>
+    </div>
+    <div class="slide-num">22 / 44</div>
+</div>
+
+<!-- SLIDE 23: Results -->
+<div class="slide-container" id="slide23">
+    <h2 class="slide-title">실행 로그 분석 및 검증</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="code-block" style="font-size: 12px;">Found 7 models, 21 tests...
+
+01:00:01 1 of 7 START incremental model stg.stg_customers [RUN]
+01:00:04 1 of 7 OK created incremental model ... [SUCCESS 1]</div>
+            <div>
+                <h3>성공 여부 판단</h3>
+                <ul class="bullet-list" style="font-size: 15px;">
+                    <li><strong>SUCCESS:</strong> 모델 빌드 완료.</li>
+                    <li><strong>ERROR:</strong> SQL 오류 발생. 로그 추적 필요.</li>
+                    <li><strong>SKIP:</strong> 선행 모델 실패로 중단됨.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">23 / 44</div>
+</div>
+
+<!-- SLIDE 24: Errors -->
+<div class="slide-container" id="slide24">
+    <h2 class="slide-title">자주 발생하는 오류 패턴</h2>
+    <div class="content-area">
+        <div class="tile-grid">
+            <div class="tile">
+                <h4 style="color: #f87171;">Syntax Error</h4>
+                <p style="font-size: 14px;">Jinja 태그 <code>{{ ... }}</code> 내 오타 또는 SQL 세미콜론 누락</p>
+            </div>
+            <div class="tile">
+                <h4 style="color: #38bdf8;">Compile Error</h4>
+                <p style="font-size: 14px;"><code>ref()</code> 대상 모델 이름이 폴더명과 다를 때</p>
+            </div>
+            <div class="tile">
+                <h4 style="color: #facc15;">DB Error</h4>
+                <p style="font-size: 14px;">데이터 타입 불일치 (String -> Integer 자동 변환 실패 등)</p>
+            </div>
+        </div>
+        <div class="note"><strong>Tip:</strong> <code>target/compiled/</code> 폴더에서 dbt가 해석한 실제 SQL문을 볼 수 있습니다.</div>
+    </div>
+    <div class="slide-num">24 / 44</div>
+</div>
+
+<!-- SLIDE 25: Macro Practice -->
+<div class="slide-container" id="slide25">
+    <h2 class="slide-title">매크로 구현 (Full Code)</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 5px;">매크로는 SQL의 '함수'입니다. 반복되는 로그 인서트를 자동화합니다.</p>
+        <div class="code-block" style="font-size: 13px; height: 320px; overflow-y: auto;">{% macro log_model_start(invocation_id) %}
+  INSERT INTO admin.dbt_log (
+    event_name, event_timestamp, event_data
+  ) VALUES (
+    'model_start', NOW(),
+    '{
+      "invocation_id": "{{ invocation_id }}",
+      "model_name": "{{ model.name }}",
+      "schema_name": "{{ model.schema }}"
+    }'::jsonb
+  );
+{% endmacro %}</div>
+        <div class="note-g">이 코드를 <code>macros/log_macros.sql</code>에 저장하면 모든 모델에서 사용 가능합니다.</div>
+    </div>
+    <div class="slide-num">25 / 44</div>
+</div>
+
+<!-- SLIDE 26: Part 2 Checklist -->
+<div class="slide-container" id="slide26">
+    <h2 class="slide-title">Part 2 완료 체크리스트</h2>
+    <div class="content-area">
+        <div class="tile" style="border: 2px solid #10b981;">
+            <ul class="bullet-list">
+                <li><i class="fa-solid fa-check"></i> 모든 STG/MART 모델 파일 작성 완료</li>
+                <li><i class="fa-solid fa-check"></i> <code>dbt run</code> 시 Error 0 확인</li>
+                <li><i class="fa-solid fa-check"></i> DB <code>admin.dbt_log</code> 테이블 데이터 확인</li>
+                <li><i class="fa-solid fa-check"></i> <code>stg.stg_customers</code> 건수와 원본 비교</li>
+            </ul>
+        </div>
+    </div>
+    <div class="slide-num">26 / 44</div>
+</div>
+
+<!-- SLIDE 27: Part 3 Start -->
+<div class="slide-container section-center" id="slide27">
+    <hr>
+    <div style="font-family: 'Space Grotesk'; font-size: 28px; color: #10b981; letter-spacing: 4px;">ORCHESTRATION LAYER</div>
+    <h1>Part 3. Airflow</h1>
+    <p style="font-size: 24px; color: #94a3b8; margin-top: 20px;">dbt 파이프라인 자동 스케줄링 및 운영</p>
+    <div class="slide-num">27 / 44</div>
+</div>
+
+<!-- SLIDE 28: Why Airflow -->
+<div class="slide-container" id="slide28">
+    <h2 class="slide-title">왜 Airflow를 도입하는가?</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="tile">
+                <h3 style="color: #94a3b8;">dbt 단독 사용</h3>
+                <p style="font-size: 15px;">• 수동 실행 (사람이 직접)<br>• 실패 시 인지 불가<br>• 실행 이력 관리 어려움</p>
+            </div>
+            <div class="tile" style="border-color: #38bdf8; background: rgba(56, 189, 248, 0.05);">
+                <h3 style="color: #38bdf8;">Airflow 통합</h3>
+                <p style="font-size: 15px;">• <strong>자동 실행:</strong> 새벽마다 구동<br>• <strong>모니터링:</strong> 대시보드 제공<br>• <strong>재시도:</strong> 실패 시 자동 리트라이</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">28 / 44</div>
+</div>
+
+<!-- SLIDE 29: Components -->
+<div class="slide-container" id="slide29">
+    <h2 class="slide-title">Airflow 핵심 구성 요소</h2>
+    <div class="content-area">
+        <div class="tile-grid">
+            <div class="tile">
+                <h3>DAG</h3>
+                <p style="font-size: 14px;">워크플로우의 전체 구조. 파이썬 코드로 정의.</p>
+            </div>
+            <div class="tile">
+                <h3>Task</h3>
+                <p style="font-size: 14px;">실행되는 개별 작업 단위.</p>
+            </div>
+            <div class="tile">
+                <h3>Scheduler</h3>
+                <p style="font-size: 14px;">작업 시간을 감시하고 Worker에게 명령 전달.</p>
+            </div>
+            <div class="tile">
+                <h3>Worker</h3>
+                <p style="font-size: 14px;">실제 dbt run 명령을 수행하는 컨테이너.</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">29 / 44</div>
+</div>
+
+<!-- SLIDE 30: DAG Concepts -->
+<div class="slide-container" id="slide30">
+    <h2 class="slide-title">DAG: 워크플로우의 규칙</h2>
+    <div class="content-area">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <p style="font-size: 24px;"><strong>Start</strong> → <strong>Staging Layer</strong> → <strong>Marts Layer</strong> → <strong>End</strong></p>
+        </div>
+        <div class="tile-grid">
+            <div class="tile"><h3>Directed</h3><p>화살표 방향으로만 흐름</p></div>
+            <div class="tile"><h3>Acyclic</h3><p>한번 지나간 길로 못 돌아옴 (루프 금지)</p></div>
+            <div class="tile"><h3>Graph</h3><p>복잡한 연결망 관리 가능</p></div>
+        </div>
+    </div>
+    <div class="slide-num">30 / 44</div>
+</div>
+
+<!-- SLIDE 31: Celery Arch -->
+<div class="slide-container" id="slide31">
+    <h2 class="slide-title">CeleryExecutor 아키텍처</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 10px;">분산 실행을 위한 Airflow의 표준 고가용성 구조입니다.</p>
+        <table>
+            <thead>
+                <tr><th width="20%">서비스</th><th>역할</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>webserver</strong></td><td>상태 확인 및 관리용 UI</td></tr>
+                <tr><td><strong>worker</strong></td><td>실제 모델 빌드 수행 (dbt 엔진 포함)</td></tr>
+                <tr><td><strong>redis</strong></td><td>Scheduler와 Worker 사이의 메신저</td></tr>
+                <tr><td><strong>postgres</strong></td><td>DAG 상태 및 실행 기록 저장</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="slide-num">31 / 44</div>
+</div>
+
+<!-- SLIDE 32: Env Check -->
+<div class="slide-container" id="slide32">
+    <h2 class="slide-title">Airflow 실습 환경 점검</h2>
+    <div class="content-area">
+        <div class="code-block" style="text-align: center;">docker compose ps</div>
+        <div class="tile" style="margin-top: 20px;">
+            <ul class="bullet-list" style="font-size: 16px;">
+                <li><strong>URL:</strong> http://localhost:8081</li>
+                <li><strong>ID/PW:</strong> airflow / airflow</li>
+                <li><strong>DAG 확인:</strong> <code>dbt_daily_flow</code> 등 5개 항목 확인</li>
+            </ul>
+        </div>
+    </div>
+    <div class="slide-num">32 / 44</div>
+</div>
+
+<!-- SLIDE 33: Safety DAG Config -->
+<div class="slide-container" id="slide33">
+    <h2 class="slide-title">DAG 필수 설정 (Best Practice)</h2>
+    <div class="content-area">
+        <p style="font-size: 17px; color: #94a3b8; margin-bottom: 10px;">운영 사고를 막기 위한 3가지 황금 규칙입니다.</p>
+        <div class="code-block" style="font-size: 15px;">with DAG(
+    'dbt_daily_flow',
+    is_paused_upon_creation=True,   <span class="cm"># ① 즉시 실행 방지</span>
+    catchup=False,                  <span class="cm"># ② 과거 누락분 일괄 자동 실행 방지</span>
+    default_args={'depends_on_past': False}, <span class="cm"># ③ 이전 성공 여부 무관</span>
+) as dag:</div>
+        <div class="tile" style="margin-top: 15px;">
+            <p style="font-size: 15px;">특히 <code>catchup=False</code>는 처음 배포 시 과거 1년치 데이터가 한꺼번에 도는 것을 막아줍니다.</p>
+        </div>
+    </div>
+    <div class="slide-num">33 / 44</div>
+</div>
+
+<!-- SLIDE 34: Args & Params -->
+<div class="slide-container" id="slide34">
+    <h2 class="slide-title">default_args & Param() 정의</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div>
+                <h3>default_args (공통 설정)</h3>
+                <div class="code-block" style="font-size: 12px;">default_args = {
+    'owner': 'airflow',
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}</div>
+            </div>
+            <div>
+                <h3>Params (UI 입력값)</h3>
+                <div class="code-block" style="font-size: 12px;">params = {
+    'data_interval_start': Param('2026-01-01', type="string"),
+    'run_mode': Param("manual", enum=["schedule", "manual"]),
+}</div>
+            </div>
+        </div>
+        <p style="font-size: 15px; color: #64748b; margin-top: 10px;">• Params를 쓰면 Airflow 화면에서 날짜를 바꿔가며 수동 트리거가 가능해집니다.</p>
+    </div>
+    <div class="slide-num">34 / 44</div>
+</div>
+
+<!-- SLIDE 35: Daily Flow Python -->
+<div class="slide-container" id="slide35">
+    <h2 class="slide-title">dbt_daily_flow.py 전체 구조</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 5px;">전체 파이프라인의 조립도입니다.</p>
+        <div class="code-block" style="font-size: 12px; height: 350px; overflow-y: auto;">with DAG('dbt_daily_flow', ...) as dag:
+    start = EmptyOperator(task_id='start')
+    
+    <span class="cm"># Staging 레이어 그룹</span>
+    tg_staging = get_dbt_tag_task_group(dag, 'staging_layer', 'stg', 'stg')
+    
+    <span class="cm"># Mart 레이어 그룹</span>
+    tg_marts = get_dbt_tag_task_group(dag, 'marts_layer', 'marts', 'marts')
+    
+    end = EmptyOperator(task_id='end')
+
+    <span class="cm"># 선후 관계 연결</span>
+    start >> tg_staging >> tg_marts >> end</div>
+        <p style="font-size: 14px; color: #64748b; margin-top: 5px;">• <code>>></code> 연산자는 왼쪽 태스크가 끝나야 오른쪽이 시작됨을 의미합니다.</p>
+    </div>
+    <div class="slide-num">35 / 44</div>
+</div>
+
+<!-- SLIDE 36: Cosmos Plugin -->
+<div class="slide-container" id="slide36">
+    <h2 class="slide-title">Cosmos — dbt 통합의 혁신</h2>
+    <div class="content-area">
+        <div class="tile" style="border: 2px solid #10b981; background: rgba(16, 185, 129, 0.05);">
+            <p style="font-size: 18px;">Cosmos는 dbt 프로젝트 폴더를 읽어 <strong>Airflow Task를 실시간으로 자동 생성</strong>합니다.</p>
+        </div>
+        <div class="two-column" style="margin-top: 30px;">
+            <div class="tile">
+                <h3 style="font-size: 18px;">장점 1: 가시성</h3>
+                <p style="font-size: 14px;">Airflow UI에서 모델별 성공/실패를 개별적으로 확인 가능.</p>
+            </div>
+            <div class="tile">
+                <h3 style="font-size: 18px;">장점 2: 자동화</h3>
+                <p style="font-size: 14px;">dbt에 모델을 추가하면 DAG 코드를 안 고쳐도 자동으로 반영됨.</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">36 / 44</div>
+</div>
+
+<!-- SLIDE 37: Cosmos Details -->
+<div class="slide-container" id="slide37">
+    <h2 class="slide-title">Cosmos 상세 구현 매커니즘</h2>
+    <div class="content-area">
+        <div class="code-block" style="font-size: 13px; height: 350px; overflow-y: auto;">def get_dbt_tag_task_group(dag, group_id, tag, schema):
+    return DbtTaskGroup(
+        group_id=group_id,
+        project_config=ProjectConfig(DBT_PROJECT_PATH),
+        <span class="cm"># dbt select 구문과 동일하게 작동</span>
+        render_config=RenderConfig(select=[f"tag:{tag}"]),
+        <span class="cm"># Airflow 파라미터를 dbt 변수로 자동 전달</span>
+        operator_args={"vars": {
+            "data_interval_start": "{{ params.data_interval_start }}",
+            "run_mode": "{{ params.run_mode }}"
+        }}
+    )</div>
+        <div class="note">이를 통해 Airflow Web UI에서 입력한 날짜가 dbt SQL의 <code>{{ var(...) }}</code>로 그대로 전달됩니다.</div>
+    </div>
+    <div class="slide-num">37 / 44</div>
+</div>
+
+<!-- SLIDE 38: Comparison -->
+<div class="slide-container" id="slide38">
+    <h2 class="slide-title">Bash Operator vs Cosmos</h2>
+    <div class="content-area">
+        <table>
+            <thead>
+                <tr><th width="30%">비교 항목</th><th>Cosmos (TaskGroup)</th><th>기존 Bash 방식</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><strong>태스크 단위</strong></td><td>모델당 1개</td><td>그룹당 1개</td></tr>
+                <tr><td><strong>의존성 관리</strong></td><td>ref() 자동 인식</td><td>수동 >> 연결</td></tr>
+                <tr><td><strong>로그 추적</strong></td><td>개별 모델별 로그</td><td>통합 로그</td></tr>
+                <tr><td><strong>재실행</strong></td><td>실패한 모델만 가능</td><td>그룹 전체 다시 실행</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="slide-num">38 / 44</div>
+</div>
+
+<!-- SLIDE 39: Chaining -->
+<div class="slide-container" id="slide39">
+    <h2 class="slide-title">TriggerDagRun: DAG 간 연결</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 10px;">관심사 분리를 위해 레이어별로 나눈 DAG를 순차적으로 호출합니다.</p>
+        <div class="code-block" style="font-size: 15px;">trigger_stg = TriggerDagRunOperator(
+    task_id='trigger_stg_flow',
+    trigger_dag_id='dbt_stg_flow',
+    wait_for_completion=True
+)</div>
+        <p style="font-size: 14px; color: #64748b; margin-top: 10px;">• <code>wait_for_completion=True</code>: 호출한 DAG가 완전히 성공할 때까지 다음 단계로 넘어가지 않고 기다립니다.</p>
+    </div>
+    <div class="slide-num">39 / 44</div>
+</div>
+
+<!-- SLIDE 40: Operation -->
+<div class="slide-container" id="slide40">
+    <h2 class="slide-title">DAG 실행 및 운영 가이드</h2>
+    <div class="content-area">
+        <div class="two-column">
+            <div class="tile">
+                <h3>수동 구동 순서</h3>
+                <ol style="font-size: 14px; line-height: 2;">
+                    <li>DAG Toggle 스위치 ON</li>
+                    <li>▶ 버튼 클릭 -> Trigger w/ config</li>
+                    <li>날짜(Interval Start) 확인</li>
+                    <li>Trigger 버튼 클릭</li>
+                </ol>
+            </div>
+            <div class="tile">
+                <h3>주요 색상 의미</h3>
+                <p style="font-size: 14px;"><span style="color: #10b981;">● Success</span>: 빌드 완료<br><span style="color: #ef4444;">● Failed</span>: 오류 발생<br><span style="color: #38bdf8;">● Running</span>: 처리 중</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-num">40 / 44</div>
+</div>
+
+<!-- SLIDE 41: Troubleshooting -->
+<div class="slide-container" id="slide41">
+    <h2 class="slide-title">로그 분석 및 문제 해결</h2>
+    <div class="content-area">
+        <div class="tile" style="margin-bottom: 20px;">
+            <p style="font-size: 18px;"><strong>확인 순서:</strong> Graph View -> 빨간색 Task 클릭 -> Log 버튼 클릭</p>
+        </div>
+        <table>
+            <thead>
+                <tr><th>키워드</th><th>원인</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>Connection refused</td><td>Postgres DB 컨테이너 비정상 종료</td></tr>
+                <tr><td>Database Error</td><td>SQL 문법 또는 데이터 타입 오류</td></tr>
+                <tr><td>Compilation Error</td><td>dbt 모델 이름이나 ref 오타</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="slide-num">41 / 44</div>
+</div>
+
+<!-- SLIDE 42: Backfill -->
+<div class="slide-container" id="slide42">
+    <h2 class="slide-title">백필(Backfill)의 개념</h2>
+    <div class="content-area">
+        <div class="note"><strong>"어제 데이터에 오류가 있어서 다시 뽑아야 해요!"</strong></div>
+        <div class="tile-grid" style="margin-top: 30px;">
+            <div class="tile"><h3>상황 1: 로직 수정</h3><p>수정된 SQL을 과거 1주일치에 일괄 적용</p></div>
+            <div class="tile"><h3>상황 2: 누락 복구</h3><p>소스 시스템 장애로 안 들어온 날짜만 재처리</p></div>
+        </div>
+    </div>
+    <div class="slide-num">42 / 44</div>
+</div>
+
+<!-- SLIDE 43: Backfill Practice -->
+<div class="slide-container" id="slide43">
+    <h2 class="slide-title">백필 실습: admin_cli_backfill</h2>
+    <div class="content-area">
+        <p style="font-size: 16px; color: #94a3b8; margin-bottom: 10px;">Airflow에서 제공하는 전용 백필 DAG를 사용하여 기간을 지정합니다.</p>
+        <table>
+            <thead>
+                <tr><th width="30%">파라미터</th><th>설명</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>target_dag_id</td><td>다시 돌리고 싶은 대상 DAG</td></tr>
+                <tr><td>start_date</td><td>재처리 시작 날짜</td></tr>
+                <tr><td>end_date</td><td>재처리 종료 날짜</td></tr>
+                <tr><td>reset_dagruns</td><td>기존 성공 이력을 지우고 강제로 돌릴지 여부</td></tr>
+            </tbody>
+        </table>
+    </div>
+    <div class="slide-num">43 / 44</div>
+</div>
+
+<!-- SLIDE 44: Final Checklist -->
+<div class="slide-container" id="slide44">
+    <h2 class="slide-title">교육 최종 체크리스트</h2>
+    <div class="content-area">
+        <div class="tile" style="border: 3px solid #10b981; text-align: center; padding: 40px;">
+            <i class="fa-solid fa-trophy" style="font-size: 80px; color: #10b981; margin-bottom: 30px;"></i>
+            <h2 style="color: #f8fafc;">축하합니다!</h2>
+            <p style="font-size: 20px; color: #94a3b8; margin-top: 20px;">이제 여러분은 <strong>dbt</strong>를 이용한 모델링과 <strong>Airflow</strong>를 통한 자동화의 전 과정을 마스터하셨습니다.</p>
+        </div>
+    </div>
+    <div class="slide-num">44 / 44</div>
+</div>
+
+<script>
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide-container');
+    const totalSlides = slides.length;
+
+    function showSlide(index) {
+        if (index >= totalSlides) index = 0;
+        if (index < 0) index = totalSlides - 1;
+        
+        slides.forEach(slide => slide.classList.remove('active'));
+        slides[index].classList.add('active');
+        currentSlide = index;
+
+        window.location.hash = 'slide' + (index + 1);
+    }
+
+    window.addEventListener('keydown', (e) => {
+        switch(e.key) {
+            case 'ArrowRight':
+            case 'ArrowDown':
+            case ' ': 
+            case 'PageDown':
+                showSlide(currentSlide + 1);
+                e.preventDefault();
+                break;
+            case 'ArrowLeft':
+            case 'ArrowUp':
+            case 'PageUp':
+                showSlide(currentSlide - 1);
+                e.preventDefault();
+                break;
+            case 'Home':
+                showSlide(0);
+                break;
+            case 'End':
+                showSlide(totalSlides - 1);
+                break;
+        }
+    });
+
+    window.onload = () => {
+        const hash = window.location.hash;
+        if (hash && hash.startsWith('#slide')) {
+            const index = parseInt(hash.replace('#slide', '')) - 1;
+            if (!isNaN(index)) {
+                showSlide(index);
+                return;
+            }
+        }
+        showSlide(0);
+    };
+</script>
+
+</body>
+</html>

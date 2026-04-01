@@ -2,6 +2,7 @@ airflow/logs/**
 venv_dbt/**
 airflow/dags/**
 airflow/config/**
+airflow/plugins/**
 airflow/postgres_data/*
 **/__pycache__/
 **/bak/
